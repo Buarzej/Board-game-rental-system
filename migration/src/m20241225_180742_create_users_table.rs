@@ -29,7 +29,7 @@ impl MigrationTrait for Migration {
                     .col(string(User::Phone))
                     .col(string(User::Email))
                     .col(string(User::Password))
-                    .col(integer(User::PenaltyPoints).default(0))
+                    .col(tiny_unsigned(User::PenaltyPoints).default(0))
                     .to_owned(),
             )
             .await
