@@ -3,6 +3,10 @@ name = "board-game-rental-system"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = [".", "migration"]
+
 [dependencies]
+migration = { path = "migration" }
 futures = "0.3.31"
-sea-orm = { version = "1.1.0", features = [ "sqlx-sqlite", "runtime-async-std-native-tls", "macros" ] }
+sea-orm = { version = "1.1.0", features = ["sqlx-sqlite", "runtime-async-std-native-tls", "macros"] }
