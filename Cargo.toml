@@ -4,3 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+futures = "0.3.31"
+sea-orm = { version = "1.1.0", features = [ "sqlx-sqlite", "runtime-async-std-native-tls", "macros" ] }
