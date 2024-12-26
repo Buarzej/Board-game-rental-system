@@ -4,6 +4,7 @@ pub mod prelude;
 
 pub mod board_game;
 pub mod extension_request;
+pub mod favourite;
 pub mod rental;
 pub mod rental_history;
 pub mod user;

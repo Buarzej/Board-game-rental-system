@@ -2,6 +2,7 @@
 
 pub use super::board_game::Entity as BoardGame;
 pub use super::extension_request::Entity as ExtensionRequest;
+pub use super::favourite::Entity as Favourite;
 pub use super::rental::Entity as Rental;
 pub use super::rental_history::Entity as RentalHistory;
 pub use super::user::Entity as User;

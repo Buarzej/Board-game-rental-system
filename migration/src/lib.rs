@@ -4,6 +4,7 @@ mod m20241225_180742_create_users_table;
 mod m20241225_182718_create_rentals_table;
 mod m20241225_190739_create_rental_history_table;
 mod m20241225_191215_create_extension_requests_table;
+mod m20241226_145812_create_favourites_table;
 
 pub struct Migrator;
 
@@ -16,6 +17,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20241225_182718_create_rentals_table::Migration),
             Box::new(m20241225_190739_create_rental_history_table::Migration),
             Box::new(m20241225_191215_create_extension_requests_table::Migration),
+            Box::new(m20241226_145812_create_favourites_table::Migration),
         ]
     }
 }
