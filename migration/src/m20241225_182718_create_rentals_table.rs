@@ -25,7 +25,7 @@ impl MigrationTrait for Migration {
                     .table(Rental::Table)
                     .if_not_exists()
                     .col(pk_auto(Rental::Id))
-                    .col(integer(Rental::GameId))
+                    .col(integer_uniq(Rental::GameId))
                     .col(integer(Rental::UserId))
                     .col(date(Rental::RentalDate))
                     .col(date(Rental::ReturnDate))

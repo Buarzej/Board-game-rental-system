@@ -8,6 +8,7 @@ use sea_orm::prelude::async_trait::async_trait;
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
+    #[sea_orm(unique)]
     pub game_id: i32,
     pub user_id: i32,
     pub rental_date: Date,

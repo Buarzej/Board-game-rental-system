@@ -23,7 +23,7 @@ pub struct Model {
 pub enum Relation {
     #[sea_orm(has_many = "super::favourite::Entity")]
     Favourite,
-    #[sea_orm(has_many = "super::rental::Entity")]
+    #[sea_orm(has_one = "super::rental::Entity")]
     Rental,
     #[sea_orm(has_many = "super::rental_history::Entity")]
     RentalHistory,
