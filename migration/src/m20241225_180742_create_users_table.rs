@@ -9,7 +9,6 @@ pub enum User {
     Id,
     Name,
     Surname,
-    Phone,
     Email,
     Password,
     PenaltyPoints,
@@ -26,8 +25,7 @@ impl MigrationTrait for Migration {
                     .col(integer(User::Id).primary_key())
                     .col(string(User::Name))
                     .col(string(User::Surname))
-                    .col(string(User::Phone))
-                    .col(string(User::Email))
+                    .col(string_uniq(User::Email))
                     .col(string(User::Password))
                     .col(tiny_unsigned(User::PenaltyPoints).default(0))
                     .to_owned(),
