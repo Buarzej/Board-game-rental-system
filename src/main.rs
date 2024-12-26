@@ -1,6 +1,6 @@
 mod db_manager;
 
-use crate::db_manager::{initialize_database, new_board_game};
+use crate::db_manager::{initialize_database};
 use futures::executor::block_on;
 use migration::MigratorTrait;
 
