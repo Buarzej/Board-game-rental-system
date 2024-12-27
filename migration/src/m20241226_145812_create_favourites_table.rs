@@ -8,7 +8,6 @@ pub struct Migration;
 #[derive(DeriveIden)]
 enum Favourite {
     Table,
-    Id,
     UserId,
     GameId,
 }
@@ -21,9 +20,14 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Favourite::Table)
                     .if_not_exists()
-                    .col(pk_auto(Favourite::Id))
                     .col(integer(Favourite::UserId))
                     .col(integer(Favourite::GameId))
+                    .primary_key(
+                        Index::create()
+                            .name("pk_favourite")
+                            .col(Favourite::UserId)
+                            .col(Favourite::GameId),
+                    )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_favourite_user")
