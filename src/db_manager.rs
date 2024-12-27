@@ -19,6 +19,7 @@ use sea_orm::{
 const DATABASE_URL: &str = "sqlite:./database.db?mode=rwc";
 const PENALTY_THRESHOLD: u8 = 2;
 
+/// Initializes the database connection and runs the necessary migrations.
 pub async fn initialize_database() -> Result<DatabaseConnection, DbErr> {
     let db = Database::connect(DATABASE_URL).await?;
     Migrator::up(&db, None).await?;
@@ -26,6 +27,7 @@ pub async fn initialize_database() -> Result<DatabaseConnection, DbErr> {
     Ok(db)
 }
 
+/// Saves a board game to the database. Handles both insertions and updates.
 pub async fn save_board_game(
     board_game: BoardGameActiveModel,
     db: &DatabaseConnection,
@@ -34,6 +36,7 @@ pub async fn save_board_game(
     Ok(())
 }
 
+/// Retrieves a board game of the given ID from the database.
 pub async fn get_board_game(
     id: i32,
     db: &DatabaseConnection,
@@ -42,6 +45,8 @@ pub async fn get_board_game(
     Ok(board_game)
 }
 
+/// Retrieves all board games from the database, along with their rental status.
+/// Should be used by admin users only, as it doesn't contain information about user favourites.
 pub async fn get_board_games_admin(
     db: &DatabaseConnection,
 ) -> Result<Vec<(BoardGameModel, Option<RentalModel>)>, DbErr> {
@@ -53,21 +58,25 @@ pub async fn get_board_games_admin(
     Ok(board_games)
 }
 
+/// Deletes a board game of the given ID from the database.
 pub async fn delete_board_game(id: i32, db: &DatabaseConnection) -> Result<(), DbErr> {
     BoardGame::delete_by_id(id).exec(db).await?;
     Ok(())
 }
 
+/// Saves a user to the database. Handles both insertions and updates.
 pub async fn save_user(user: UserActiveModel, db: &DatabaseConnection) -> Result<(), DbErr> {
     user.save(db).await?;
     Ok(())
 }
 
+/// Retrieves a user of the given ID from the database.
 pub async fn get_user(id: i32, db: &DatabaseConnection) -> Result<Option<UserModel>, DbErr> {
     let user = User::find_by_id(id).one(db).await?;
     Ok(user)
 }
 
+/// Retrieves all users from the database.
 pub async fn get_users(db: &DatabaseConnection) -> Result<Vec<UserModel>, DbErr> {
     let users = User::find()
         .order_by_asc(user::Column::Surname)
@@ -76,26 +85,32 @@ pub async fn get_users(db: &DatabaseConnection) -> Result<Vec<UserModel>, DbErr>
     Ok(users)
 }
 
+/// Checks whether a user is penalized based on their penalty points.
+/// A user is penalized if their penalty points exceed `PENALTY_THRESHOLD` const.
 pub async fn is_user_penalized(id: i32, db: &DatabaseConnection) -> Result<bool, DbErr> {
     let user = User::find_by_id(id).one(db).await?;
     Ok(user.map_or(false, |u| u.penalty_points > PENALTY_THRESHOLD))
 }
 
+/// Deletes a user of the given ID from the database.
 pub async fn delete_user(id: i32, db: &DatabaseConnection) -> Result<(), DbErr> {
     User::delete_by_id(id).exec(db).await?;
     Ok(())
 }
 
+/// Saves a rental to the database. Handles both insertions and updates.
 pub async fn save_rental(rental: RentalActiveModel, db: &DatabaseConnection) -> Result<(), DbErr> {
     rental.save(db).await?;
     Ok(())
 }
 
+/// Retrieves a rental of the given ID from the database.
 pub async fn get_rental(id: i32, db: &DatabaseConnection) -> Result<Option<RentalModel>, DbErr> {
     let rental = Rental::find_by_id(id).one(db).await?;
     Ok(rental)
 }
 
+/// Retrieves the rental of the given game ID from the database.
 pub async fn get_game_rental_status(
     game_id: i32,
     db: &DatabaseConnection,
@@ -107,6 +122,7 @@ pub async fn get_game_rental_status(
     Ok(rental)
 }
 
+/// Retrieves all rentals from the database.
 pub async fn get_rentals(
     db: &DatabaseConnection,
 ) -> Result<Vec<(RentalModel, BoardGameModel, Option<ExtensionRequestModel>)>, DbErr> {
@@ -133,6 +149,8 @@ pub async fn get_rentals(
     Ok(zipped_rentals)
 }
 
+/// Retrieves all rentals from the database for the given user ID,
+/// along with the information about associated board games and extension requests.
 pub async fn get_user_rentals_admin(
     user_id: i32,
     db: &DatabaseConnection,
@@ -164,11 +182,13 @@ pub async fn get_user_rentals_admin(
     Ok(zipped_user_rentals)
 }
 
+/// Deletes a rental of the given ID from the database.
 pub async fn delete_rental(id: i32, db: &DatabaseConnection) -> Result<(), DbErr> {
     Rental::delete_by_id(id).exec(db).await?;
     Ok(())
 }
 
+/// Archives a rental of the given ID by moving it to the rental history table.
 pub async fn archive_rental(id: i32, db: &DatabaseConnection) -> Result<(), DbErr> {
     let rental = Rental::find_by_id(id).one(db).await?;
     if let Some(rental) = rental {
@@ -186,6 +206,8 @@ pub async fn archive_rental(id: i32, db: &DatabaseConnection) -> Result<(), DbEr
     Ok(())
 }
 
+/// Retrieves all rental history entries from the database,
+/// along with the information about associated board games and users.
 pub async fn get_rental_history(
     db: &DatabaseConnection,
 ) -> Result<Vec<(RentalHistoryModel, BoardGameModel, UserModel)>, DbErr> {
@@ -218,6 +240,9 @@ pub async fn get_rental_history(
     Ok(rental_history)
 }
 
+/// Retrieves all rental history entries from the database for the given user ID,
+/// along with the information about associated board games.
+/// Should be used by admin users only, as it doesn't contain information about user favourites.
 pub async fn get_user_rental_history_admin(
     user_id: i32,
     db: &DatabaseConnection,
@@ -238,11 +263,13 @@ pub async fn get_user_rental_history_admin(
     Ok(user_rental_history)
 }
 
+/// Deletes a rental history entry of the given ID from the database.
 pub async fn delete_rental_history(id: i32, db: &DatabaseConnection) -> Result<(), DbErr> {
     RentalHistory::delete_by_id(id).exec(db).await?;
     Ok(())
 }
 
+/// Saves a rental history entry to the database. Handles both insertions and updates.
 pub async fn save_extension_request(
     extension_request: ExtensionRequestActiveModel,
     db: &DatabaseConnection,
@@ -251,6 +278,7 @@ pub async fn save_extension_request(
     Ok(())
 }
 
+/// Retrieves an extension request of the given ID from the database.
 pub async fn get_extension_request(
     id: i32,
     db: &DatabaseConnection,
@@ -259,11 +287,13 @@ pub async fn get_extension_request(
     Ok(extension_request)
 }
 
+/// Deletes an extension request of the given ID from the database.
 pub async fn delete_extension_request(id: i32, db: &DatabaseConnection) -> Result<(), DbErr> {
     ExtensionRequest::delete_by_id(id).exec(db).await?;
     Ok(())
 }
 
+/// Saves a favourite to the database. Handles both insertions and updates.
 pub async fn save_favourite(
     favourite: FavouriteActiveModel,
     db: &DatabaseConnection,
@@ -272,19 +302,21 @@ pub async fn save_favourite(
     Ok(())
 }
 
-pub async fn get_favourite(
+/// Checks whether a user has a game in their favourites.
+pub async fn is_favourite(
     user_id: i32,
     game_id: i32,
     db: &DatabaseConnection,
-) -> Result<Option<FavouriteModel>, DbErr> {
+) -> Result<bool, DbErr> {
     let favourite = Favourite::find()
         .filter(favourite::Column::UserId.eq(user_id))
         .filter(favourite::Column::GameId.eq(game_id))
         .one(db)
         .await?;
-    Ok(favourite)
+    Ok(favourite.is_some())
 }
 
+/// Deletes a favourite of the given user ID and game ID from the database.
 pub async fn delete_favourite(
     user_id: i32,
     game_id: i32,
