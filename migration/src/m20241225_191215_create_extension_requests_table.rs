@@ -1,4 +1,3 @@
-use super::m20241225_182718_create_rentals_table::Rental;
 use sea_orm_migration::{prelude::*, schema::*};
 
 #[derive(DeriveMigrationName)]
@@ -11,6 +10,12 @@ pub enum ExtensionRequest {
     RentalId,
     RequestDate,
     ExtensionDate,
+}
+
+#[derive(DeriveIden)]
+pub enum Rental {
+    Table,
+    Id,
 }
 
 #[async_trait::async_trait]

@@ -1,5 +1,3 @@
-use super::m20241225_172304_create_board_games_table::BoardGame;
-use super::m20241225_180742_create_users_table::User;
 use sea_orm_migration::{prelude::*, schema::*};
 
 #[derive(DeriveMigrationName)]
@@ -10,6 +8,18 @@ enum Favourite {
     Table,
     UserId,
     GameId,
+}
+
+#[derive(DeriveIden)]
+pub enum BoardGame {
+    Table,
+    Id,
+}
+
+#[derive(DeriveIden)]
+pub enum User {
+    Table,
+    Id,
 }
 
 #[async_trait::async_trait]
