@@ -9,12 +9,10 @@ use entity::rental_history::{
     ActiveModel as RentalHistoryActiveModel, Model as RentalHistoryModel,
 };
 use entity::user::{ActiveModel as UserActiveModel, Model as UserModel};
-use entity::{board_game, favourite, rental, user};
-use migration::{Migrator, MigratorTrait};
-use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, Database, DatabaseConnection, DbErr, EntityTrait,
-    LoaderTrait, QueryFilter, QueryOrder,
-};
+use entity::{board_game, extension_request, favourite, rental, rental_history, user};
+use migration::{JoinType, Migrator, MigratorTrait};
+use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, Database, DatabaseBackend, DatabaseConnection, DbBackend, DbErr, EntityTrait, FromQueryResult, Iterable, LoaderTrait, QueryFilter, QueryOrder, QuerySelect, QueryTrait, TransactionTrait};
+use sea_orm::prelude::Date;
 
 const DATABASE_URL: &str = "sqlite:./database.db?mode=rwc";
 const PENALTY_THRESHOLD: u8 = 2;
@@ -122,64 +120,72 @@ pub async fn get_game_rental_status(
     Ok(rental)
 }
 
-/// Retrieves all rentals from the database.
+#[derive(Debug, Eq, PartialEq, FromQueryResult)]
+pub struct GetRentalsQueryResult {
+    id: i32,
+    game_id: i32,
+    user_id: i32,
+    rental_date: Date,
+    return_date: Date,
+    picked_up: bool,
+    title: String,
+    photo_filename: String,
+    name: String,
+    surname: String,
+    extension_date: Option<Date>,
+}
+
+/// Retrieves all rentals from the database, along with the information
+/// about associated board games, users, and extension requests.
 pub async fn get_rentals(
     db: &DatabaseConnection,
-) -> Result<Vec<(RentalModel, BoardGameModel, Option<ExtensionRequestModel>)>, DbErr> {
-    let rentals: Vec<RentalModel> = Rental::find()
+) -> Result<Vec<GetRentalsQueryResult>, DbErr> {
+    let rentals = Rental::find()
+        .columns([board_game::Column::Title, board_game::Column::PhotoFilename])
+        .columns([user::Column::Name, user::Column::Surname])
+        .column(extension_request::Column::ExtensionDate)
+        .inner_join(BoardGame)
+        .inner_join(User)
+        .left_join(ExtensionRequest)
         .order_by_asc(rental::Column::RentalDate)
+        .into_model::<GetRentalsQueryResult>()
         .all(db)
         .await?;
-    let rentals_games: Vec<Option<BoardGameModel>> = rentals.load_one(BoardGame, db).await?;
-    let rentals_extension_requests: Vec<Option<ExtensionRequestModel>> =
-        rentals.load_one(ExtensionRequest, db).await?;
+    Ok(rentals)
+}
 
-    // Each rental is guaranteed to have a game associated with it.
-    let rentals_games: Vec<BoardGameModel> =
-        rentals_games.into_iter().map(|opt| opt.unwrap()).collect();
-
-    // Zip all three vectors together.
-    let zipped_rentals = rentals
-        .into_iter()
-        .zip(rentals_games.into_iter())
-        .zip(rentals_extension_requests.into_iter())
-        .map(|((rental, game), extension_request)| (rental, game, extension_request))
-        .collect();
-
-    Ok(zipped_rentals)
+#[derive(Debug, Eq, PartialEq, FromQueryResult)]
+pub struct GetUserRentalsQueryResult {
+    id: i32,
+    game_id: i32,
+    rental_date: Date,
+    return_date: Date,
+    picked_up: bool,
+    title: String,
+    photo_filename: String,
+    extension_date: Option<Date>,
 }
 
 /// Retrieves all rentals from the database for the given user ID,
 /// along with the information about associated board games and extension requests.
+/// TODO: should be used by admin...
 pub async fn get_user_rentals_admin(
     user_id: i32,
     db: &DatabaseConnection,
-) -> Result<Vec<(RentalModel, BoardGameModel, Option<ExtensionRequestModel>)>, DbErr> {
-    let user_rentals: Vec<RentalModel> = Rental::find()
+) -> Result<Vec<GetUserRentalsQueryResult>, DbErr> {
+    let user_rentals = Rental::find()
+        .select_only()
+        .columns(rental::Column::iter().filter(|c| !matches!(c, rental::Column::UserId)))
+        .columns([board_game::Column::Title, board_game::Column::PhotoFilename])
+        .column(extension_request::Column::ExtensionDate)
+        .inner_join(BoardGame)
+        .left_join(ExtensionRequest)
         .filter(rental::Column::UserId.eq(user_id))
         .order_by_asc(rental::Column::RentalDate)
+        .into_model::<GetUserRentalsQueryResult>()
         .all(db)
         .await?;
-    let user_rentals_games: Vec<Option<BoardGameModel>> =
-        user_rentals.load_one(BoardGame, db).await?;
-    let user_rentals_extension_requests: Vec<Option<ExtensionRequestModel>> =
-        user_rentals.load_one(ExtensionRequest, db).await?;
-
-    // Each rental is guaranteed to have a game associated with it.
-    let user_rentals_games: Vec<BoardGameModel> = user_rentals_games
-        .into_iter()
-        .map(|opt| opt.unwrap())
-        .collect();
-
-    // Zip all three vectors together.
-    let zipped_user_rentals = user_rentals
-        .into_iter()
-        .zip(user_rentals_games.into_iter())
-        .zip(user_rentals_extension_requests.into_iter())
-        .map(|((rental, game), extension_request)| (rental, game, extension_request))
-        .collect();
-
-    Ok(zipped_user_rentals)
+    Ok(user_rentals)
 }
 
 /// Deletes a rental of the given ID from the database.
@@ -192,6 +198,8 @@ pub async fn delete_rental(id: i32, db: &DatabaseConnection) -> Result<(), DbErr
 pub async fn archive_rental(id: i32, db: &DatabaseConnection) -> Result<(), DbErr> {
     let rental = Rental::find_by_id(id).one(db).await?;
     if let Some(rental) = rental {
+        let txn = db.begin().await?;
+        
         let rental_history = RentalHistoryActiveModel {
             id: ActiveValue::Set(rental.id),
             game_id: ActiveValue::Set(rental.game_id),
@@ -200,43 +208,42 @@ pub async fn archive_rental(id: i32, db: &DatabaseConnection) -> Result<(), DbEr
             return_date: ActiveValue::Set(rental.return_date),
             picked_up: ActiveValue::Set(rental.picked_up),
         };
-        rental_history.insert(db).await?;
-        Rental::delete_by_id(id).exec(db).await?;
+        rental_history.insert(&txn).await?;
+        Rental::delete_by_id(id).exec(&txn).await?;
+        
+        txn.commit().await?;
     }
     Ok(())
+}
+
+#[derive(Debug, Eq, PartialEq, FromQueryResult)]
+pub struct GetRentalHistoryQueryResult {
+    id: i32,
+    game_id: i32,
+    user_id: i32,
+    rental_date: Date,
+    return_date: Date,
+    picked_up: bool,
+    title: String,
+    photo_filename: String,
+    name: String,
+    surname: String,
 }
 
 /// Retrieves all rental history entries from the database,
 /// along with the information about associated board games and users.
 pub async fn get_rental_history(
     db: &DatabaseConnection,
-) -> Result<Vec<(RentalHistoryModel, BoardGameModel, UserModel)>, DbErr> {
+) -> Result<Vec<GetRentalHistoryQueryResult>, DbErr> {
     let rental_history = RentalHistory::find()
-        .order_by_desc(rental::Column::ReturnDate)
+        .columns([board_game::Column::Title, board_game::Column::PhotoFilename])
+        .columns([user::Column::Name, user::Column::Surname])
+        .inner_join(BoardGame)
+        .inner_join(User)
+        .order_by_desc(rental_history::Column::ReturnDate)
+        .into_model::<GetRentalHistoryQueryResult>()
         .all(db)
         .await?;
-    let rental_history_games: Vec<Option<BoardGameModel>> =
-        rental_history.load_one(BoardGame, db).await?;
-    let rental_history_users: Vec<Option<UserModel>> = rental_history.load_one(User, db).await?;
-
-    // Each rental history entry is guaranteed to have a game and user associated with it.
-    let rental_history_games: Vec<BoardGameModel> = rental_history_games
-        .into_iter()
-        .map(|opt| opt.unwrap())
-        .collect();
-    let rental_history_users: Vec<UserModel> = rental_history_users
-        .into_iter()
-        .map(|opt| opt.unwrap())
-        .collect();
-
-    // Zip all three vectors together.
-    let rental_history: Vec<(RentalHistoryModel, BoardGameModel, UserModel)> = rental_history
-        .into_iter()
-        .zip(rental_history_games.into_iter())
-        .zip(rental_history_users.into_iter())
-        .map(|((rental_history, game), user)| (rental_history, game, user))
-        .collect();
-
     Ok(rental_history)
 }
 
