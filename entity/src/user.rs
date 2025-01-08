@@ -11,10 +11,10 @@ pub struct Model {
     pub surname: String,
     #[sea_orm(unique)]
     pub email: String,
-    pub password: String,
-    pub salt: String,
+    pub password_hash: String,
     #[sea_orm(default_value = 0)]
     pub penalty_points: u8,
+    #[sea_orm(default_value = false)]
     pub is_admin: bool,
 }
 
