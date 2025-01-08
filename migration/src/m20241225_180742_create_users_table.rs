@@ -10,8 +10,10 @@ pub enum User {
     Name,
     Surname,
     Email,
-    Password,
+    PasswordHash,
+    Salt,
     PenaltyPoints,
+    IsAdmin,
 }
 
 #[async_trait::async_trait]
@@ -26,8 +28,10 @@ impl MigrationTrait for Migration {
                     .col(string(User::Name))
                     .col(string(User::Surname))
                     .col(string_uniq(User::Email))
-                    .col(string(User::Password))
+                    .col(string(User::PasswordHash))
+                    .col(string(User::Salt))
                     .col(tiny_unsigned(User::PenaltyPoints).default(0))
+                    .col(boolean(User::IsAdmin).default(false))
                     .to_owned(),
             )
             .await

@@ -12,8 +12,10 @@ pub struct Model {
     #[sea_orm(unique)]
     pub email: String,
     pub password: String,
+    pub salt: String,
     #[sea_orm(default_value = 0)]
     pub penalty_points: u8,
+    pub is_admin: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -41,6 +43,15 @@ impl Related<super::rental::Entity> for Entity {
 impl Related<super::rental_history::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::RentalHistory.def()
+    }
+}
+
+impl Related<super::board_game::Entity> for Entity {
+    fn to() -> RelationDef {
+        super::favourite::Relation::BoardGame.def()
+    }
+    fn via() -> Option<RelationDef> {
+        Some(super::favourite::Relation::User.def().rev())
     }
 }
 

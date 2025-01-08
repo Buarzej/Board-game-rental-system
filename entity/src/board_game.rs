@@ -47,6 +47,15 @@ impl Related<super::rental_history::Entity> for Entity {
     }
 }
 
+impl Related<super::user::Entity> for Entity {
+    fn to() -> RelationDef {
+        super::favourite::Relation::User.def()
+    }
+    fn via() -> Option<RelationDef> {
+        Some(super::favourite::Relation::BoardGame.def().rev())
+    }
+}
+
 #[async_trait]
 impl ActiveModelBehavior for ActiveModel {
     async fn before_save<C>(self, _db: &C, _insert: bool) -> Result<Self, DbErr>
