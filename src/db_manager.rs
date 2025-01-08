@@ -17,15 +17,43 @@ use sea_orm::{
     RelationTrait, TransactionTrait,
 };
 
-const DATABASE_URL: &str = "sqlite:./database.db?mode=rwc";
 const PENALTY_THRESHOLD: u8 = 2;
 
-/// Initializes the database connection and runs the necessary migrations.
-pub async fn initialize_database() -> Result<DatabaseConnection, DbErr> {
-    let db = Database::connect(DATABASE_URL).await?;
-    Migrator::up(&db, None).await?;
+#[derive(Debug, Clone)]
+pub struct DatabaseManager {
+    db: DatabaseConnection,
+}
 
-    Ok(db)
+impl DatabaseManager {
+    
+    /// Initializes the database connection and runs the migrations.
+    pub async fn new(db_url: &str) -> Result<Self, DbErr> {
+        let db = Database::connect(db_url).await?;
+        Migrator::up(&db, None).await?;
+
+        Ok(Self { db })
+    }
+
+    /// Inserts a new user into the database.
+    pub async fn insert_user(&self, user: UserActiveModel) -> Result<(), DbErr> {
+        user.insert(&self.db).await?;
+        Ok(())
+    }
+
+    /// Retrieves a user of the given ID from the database.
+    pub async fn get_user(&self, id: i32) -> Result<Option<UserModel>, DbErr> {
+        let user = User::find_by_id(id).one(&self.db).await?;
+        Ok(user)
+    }
+
+    /// Retrieves all users from the database.
+    pub async fn get_users(&self) -> Result<Vec<UserModel>, DbErr> {
+        let users = User::find()
+            .order_by_asc(user::Column::Surname)
+            .all(&self.db)
+            .await?;
+        Ok(users)
+    }
 }
 
 /// Saves a board game to the database. Handles both insertions and updates.
@@ -117,27 +145,6 @@ pub async fn get_board_games_admin(
 pub async fn delete_board_game(id: i32, db: &DatabaseConnection) -> Result<(), DbErr> {
     BoardGame::delete_by_id(id).exec(db).await?;
     Ok(())
-}
-
-/// Saves a user to the database. Handles both insertions and updates.
-pub async fn save_user(user: UserActiveModel, db: &DatabaseConnection) -> Result<(), DbErr> {
-    user.save(db).await?;
-    Ok(())
-}
-
-/// Retrieves a user of the given ID from the database.
-pub async fn get_user(id: i32, db: &DatabaseConnection) -> Result<Option<UserModel>, DbErr> {
-    let user = User::find_by_id(id).one(db).await?;
-    Ok(user)
-}
-
-/// Retrieves all users from the database.
-pub async fn get_users(db: &DatabaseConnection) -> Result<Vec<UserModel>, DbErr> {
-    let users = User::find()
-        .order_by_asc(user::Column::Surname)
-        .all(db)
-        .await?;
-    Ok(users)
 }
 
 /// Checks whether a user is penalized based on their penalty points.
@@ -469,12 +476,12 @@ pub async fn delete_extension_request(id: i32, db: &DatabaseConnection) -> Resul
     Ok(())
 }
 
-/// Saves a favourite to the database. Handles both insertions and updates.
+/// Saves a favourite to the database.
 pub async fn save_favourite(
     favourite: FavouriteActiveModel,
     db: &DatabaseConnection,
 ) -> Result<(), DbErr> {
-    favourite.save(db).await?;
+    favourite.insert(db).await?;
     Ok(())
 }
 
