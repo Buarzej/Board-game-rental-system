@@ -1,21 +1,23 @@
+mod auth_manager;
 mod db_manager;
 
+use crate::auth_manager::AuthManager;
 use crate::db_manager::DatabaseManager;
 use actix_files::NamedFile;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use dotenv::dotenv;
 use entity::user::ActiveModel as UserActiveModel;
 use sea_orm::ActiveValue::Set;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-const DATABASE_URL: &str = "sqlite:./database.db?mode=rwc";
-
 #[derive(Debug, Clone)]
 struct AppState {
     db: DatabaseManager,
+    auth: AuthManager,
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,61 +37,54 @@ struct LoginFormData {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let db = DatabaseManager::new(DATABASE_URL)
+    dotenv().ok(); // Load environment variables
+    let db = DatabaseManager::new(&std::env::var("DATABASE_URL").expect("DATABASE_URL is not set"))
         .await
         .expect("Failed to initialize database");
+    let auth = AuthManager::new().expect("Failed to initialize auth manager");
 
-    let state = AppState { db };
+    let state = AppState { db, auth };
 
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(state.clone()))
             .service(index_register)
             .service(index_login)
-            .service(
-                web::scope("/api")
-                    .service(register)
-                    .service(count)
-                    .service(login),
-            )
+            .service(web::scope("/api").service(register).service(login))
     })
     .bind(("127.0.0.1", 8080))?
     .run()
     .await
 }
 
+// TODO: only for testing purposes
 #[get("/login")]
 async fn index_login(_req: HttpRequest) -> actix_web::Result<NamedFile> {
     let path: PathBuf = "./src/static/login.html".parse()?;
     Ok(NamedFile::open(path)?)
 }
 
+// TODO: only for testing purposes
 #[get("/register")]
 async fn index_register(_req: HttpRequest) -> actix_web::Result<NamedFile> {
     let path: PathBuf = "./src/static/register.html".parse()?;
     Ok(NamedFile::open(path)?)
 }
 
-#[get("/user/count")]
-async fn count(data: web::Data<AppState>) -> impl Responder {
-    let users = data.db.get_users().await.expect("Failed to count users");
-    HttpResponse::Ok().body(format!("User count: {}", users.len()))
-}
-
 #[post("/user/login")]
 async fn login(form: web::Form<LoginFormData>, data: web::Data<AppState>) -> HttpResponse {
     match data.db.get_user(form.id).await {
         Ok(Some(user)) => {
-            let parsed_hash = match PasswordHash::new(&user.password_hash) {
-                Ok(parsed_hash) => parsed_hash,
-                Err(_) => {
-                    return HttpResponse::InternalServerError()
-                        .body("Failed to parse password hash")
-                }
-            };
-            match Argon2::default().verify_password(form.password.as_bytes(), &parsed_hash) {
-                Ok(_) => HttpResponse::Ok().into(), // TODO: add JWT token
-                Err(_) => HttpResponse::Unauthorized().body("Invalid password"),
+            match data
+                .auth
+                .verify_password(form.password.clone(), user.password_hash)
+            {
+                Ok(true) => match data.auth.generate_jwt(user.id, user.is_admin) {
+                    Ok(token) => HttpResponse::Ok().body(token),
+                    Err(_) => HttpResponse::InternalServerError().body("Failed to generate JWT"),
+                },
+                Ok(false) => HttpResponse::Unauthorized().body("Invalid password"),
+                Err(_) => HttpResponse::InternalServerError().body("Failed to verify password"),
             }
         }
         Ok(None) => HttpResponse::Unauthorized().body("User not found"),
@@ -99,14 +94,9 @@ async fn login(form: web::Form<LoginFormData>, data: web::Data<AppState>) -> Htt
 
 #[post("/user/register")]
 async fn register(form: web::Form<RegisterFormData>, data: web::Data<AppState>) -> HttpResponse {
-    // Hash user's password using Argon2 algorithm.
-    let salt = SaltString::generate(&mut OsRng);
-    let argon2 = Argon2::default();
-    let password_hash = match argon2.hash_password(form.password.as_bytes(), &salt) {
-        Ok(hash) => hash.to_string(),
-        Err(_) => {
-            return HttpResponse::InternalServerError().body("Failed to hash password with Argon2")
-        }
+    let password_hash = match data.auth.hash_password(form.password.clone()) {
+        Ok(hash) => hash,
+        Err(_) => return HttpResponse::InternalServerError().body("Failed to hash password"),
     };
 
     let user = UserActiveModel {
