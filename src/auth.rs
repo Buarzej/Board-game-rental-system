@@ -64,3 +64,7 @@ pub(crate) fn verify_password(
         .verify_password(password.as_bytes(), &parsed_hash)
         .is_ok())
 }
+
+// TODO: handle email verification
+
+// TODO: handle forgot password

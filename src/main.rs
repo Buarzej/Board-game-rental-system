@@ -16,6 +16,7 @@ use entity::board_game::ActiveModel as BoardGameActiveModel;
 use entity::user::ActiveModel as UserActiveModel;
 use futures::future::{ready, Ready};
 use sea_orm::ActiveValue::Set;
+use sea_orm::{ActiveValue, NotSet};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -45,16 +46,29 @@ impl<const IS_ADMIN: bool> FromRequest for Auth<IS_ADMIN> {
             Some(token) => match verify_jwt(token) {
                 Ok(claims) => {
                     if IS_ADMIN && !claims.is_admin {
-                        return ready(Err(actix_web::error::ErrorForbidden("Insufficient privileges")));
+                        return ready(Err(actix_web::error::ErrorForbidden(
+                            "Insufficient privileges",
+                        )));
                     }
                     ready(Ok(Self(claims)))
                 }
-                Err(e) => ready(Err(actix_web::error::ErrorUnauthorized(format!("Invalid token: {}", e)))),
+                Err(e) => ready(Err(actix_web::error::ErrorUnauthorized(format!(
+                    "Invalid token: {}",
+                    e
+                )))),
             },
             None => ready(Err(actix_web::error::ErrorUnauthorized(
                 "No token provided",
             ))),
         }
+    }
+}
+
+fn is_self_request(user: &Claims, id: i32) -> Result<(), HttpResponse> {
+    if !user.is_admin && user.sub != id {
+        Err(HttpResponse::Forbidden().body("Insufficient privileges"))
+    } else {
+        Ok(())
     }
 }
 
@@ -85,6 +99,21 @@ struct BoardGameFormData {
     additional_info: Text<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ChangePasswordFormData {
+    password: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateUserFormData {
+    name: String,
+    surname: String,
+    email: String,
+    password: String,
+    penalty_points: u8,
+    is_admin: bool,
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Load all the necessary resources.
@@ -102,15 +131,18 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::new(state.clone()))
             .service(Files::new("/static", "./static/img"))
-            .service(index_register)
             .service(index_login)
+            .service(index_register)
             .service(index_board_game)
-            .service(secret)
             .service(
                 web::scope("/api")
-                    .service(register)
                     .service(login)
+                    .service(register)
                     .service(get_user)
+                    .service(get_users)
+                    .service(is_penalized)
+                    .service(change_password)
+                    .service(update_user)
                     .service(save_board_game),
             )
     })
@@ -138,12 +170,6 @@ async fn index_register(_req: HttpRequest) -> actix_web::Result<NamedFile> {
 async fn index_board_game(_req: HttpRequest) -> actix_web::Result<NamedFile> {
     let path: PathBuf = "./static/add_board_game.html".parse()?;
     Ok(NamedFile::open(path)?)
-}
-
-// For now, only for testing purposes.
-#[get("/secret")]
-async fn secret(Auth(user): Auth<HAS_TOKEN>) -> HttpResponse {
-    HttpResponse::Ok().body(format!("Hello, {}!", user.sub))
 }
 
 #[post("/user/login")]
@@ -187,11 +213,116 @@ async fn register(form: Form<RegisterFormData>, data: Data<AppState>) -> HttpRes
 }
 
 #[get("/user/get/{id}")]
-async fn get_user(id: web::Path<i32>, Auth(_user): Auth<HAS_ADMIN_TOKEN>, data: Data<AppState>) -> HttpResponse {
-    match data.db.get_user(id.into_inner()).await {
+async fn get_user(
+    id: web::Path<i32>,
+    Auth(user): Auth<HAS_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    // Non-admin user can only check info about themselves.
+    let id = id.into_inner();
+    if let Err(response) = is_self_request(&user, id) {
+        return response;
+    }
+
+    match data.db.get_user(id).await {
         Ok(Some(user)) => HttpResponse::Ok().json(user),
         Ok(None) => HttpResponse::NotFound().body("User not found"),
         Err(_) => HttpResponse::InternalServerError().body("Failed to get user data from database"),
+    }
+}
+
+#[get("/user/get_all")]
+async fn get_users(Auth(_user): Auth<HAS_ADMIN_TOKEN>, data: Data<AppState>) -> HttpResponse {
+    match data.db.get_users().await {
+        Ok(users) => HttpResponse::Ok().json(users),
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Failed to get users data from database")
+        }
+    }
+}
+
+#[get("/user/is_penalized/{id}")]
+async fn is_penalized(
+    id: web::Path<i32>,
+    Auth(user): Auth<HAS_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    // Non-admin user can only check info about themselves.
+    let id = id.into_inner();
+    if let Err(response) = is_self_request(&user, id) {
+        return response;
+    }
+
+    match data.db.is_user_penalized(id).await {
+        Ok(res) => HttpResponse::Ok().json(res),
+        Err(_) => HttpResponse::InternalServerError().body("Failed to get user data from database"),
+    }
+}
+
+#[post("/user/change_password/{id}")]
+async fn change_password(
+    id: web::Path<i32>,
+    form: Form<ChangePasswordFormData>,
+    Auth(user): Auth<HAS_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    // Non-admin user can only change their own password.
+    let id = id.into_inner();
+    if let Err(response) = is_self_request(&user, id) {
+        return response;
+    }
+
+    let password_hash = match hash_password(form.password.clone()) {
+        Ok(hash) => hash,
+        Err(_) => return HttpResponse::InternalServerError().body("Failed to hash password"),
+    };
+
+    let user = UserActiveModel {
+        id: Set(id),
+        password_hash: Set(password_hash),
+        ..Default::default()
+    };
+
+    match data.db.update_user(user).await {
+        Ok(_) => HttpResponse::Ok().into(),
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Failed to save user data into database")
+        }
+    }
+}
+
+#[post("/user/update/{id}")]
+async fn update_user(
+    id: web::Path<i32>,
+    form: Form<UpdateUserFormData>,
+    Auth(_user): Auth<HAS_ADMIN_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    let id = id.into_inner();
+
+    let password_hash = if !form.password.is_empty() {
+        NotSet
+    } else if let Ok(hash) = hash_password(form.password.clone()) {
+        Set(hash)
+    } else {
+        return HttpResponse::InternalServerError().body("Failed to hash password");
+    };
+
+    let user = UserActiveModel {
+        id: Set(id),
+        name: Set(form.name.clone()),
+        surname: Set(form.surname.clone()),
+        email: Set(form.email.clone()),
+        password_hash,
+        penalty_points: Set(form.penalty_points),
+        is_admin: Set(form.is_admin),
+    };
+
+    match data.db.update_user(user).await {
+        Ok(_) => HttpResponse::Ok().into(),
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Failed to save user data into database")
+        }
     }
 }
 
