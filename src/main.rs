@@ -3,11 +3,16 @@ mod db_manager;
 
 use crate::auth::{generate_jwt, hash_password, verify_jwt, verify_password, Claims};
 use crate::db_manager::DatabaseManager;
-use actix_files::NamedFile;
+use actix_files::{Files, NamedFile};
+use actix_multipart::form::tempfile::TempFile;
+use actix_multipart::form::text::Text;
+use actix_multipart::form::MultipartForm;
 use actix_web::dev::Payload;
 use actix_web::http::header;
+use actix_web::web::{Data, Form};
 use actix_web::{get, post, web, App, FromRequest, HttpRequest, HttpResponse, HttpServer};
 use dotenv::dotenv;
+use entity::board_game::ActiveModel as BoardGameActiveModel;
 use entity::user::ActiveModel as UserActiveModel;
 use futures::future::{ready, Ready};
 use sea_orm::ActiveValue::Set;
@@ -19,6 +24,7 @@ struct AppState {
     db: DatabaseManager,
 }
 
+// Struct for authenticating clients' requests.
 struct Auth(Claims);
 
 impl FromRequest for Auth {
@@ -59,6 +65,18 @@ struct LoginFormData {
     password: String,
 }
 
+#[derive(Debug, MultipartForm)]
+struct BoardGameFormData {
+    title: Text<String>,
+    weight: Text<u16>,
+    image: TempFile,
+    min_players: Text<u8>,
+    max_players: Text<u8>,
+    min_playtime: Text<u16>,
+    max_playtime: Text<u16>,
+    additional_info: Text<String>,
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Load all the necessary resources.
@@ -75,37 +93,94 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(state.clone()))
+            .service(Files::new("/static", "./static/img"))
             .service(index_register)
             .service(index_login)
+            .service(index_board_game)
             .service(secret)
-            .service(web::scope("/api").service(register).service(login))
+            .service(
+                web::scope("/api")
+                    .service(register)
+                    .service(login)
+                    .service(save_board_game),
+            )
     })
     .bind(("127.0.0.1", 8080))?
     .run()
     .await
 }
 
-// TODO: only for testing purposes
+// For now, only for testing purposes.
 #[get("/login")]
 async fn index_login(_req: HttpRequest) -> actix_web::Result<NamedFile> {
-    let path: PathBuf = "./src/static/login.html".parse()?;
+    let path: PathBuf = "./static/login.html".parse()?;
     Ok(NamedFile::open(path)?)
 }
 
-// TODO: only for testing purposes
+// For now, only for testing purposes.
 #[get("/register")]
 async fn index_register(_req: HttpRequest) -> actix_web::Result<NamedFile> {
-    let path: PathBuf = "./src/static/register.html".parse()?;
+    let path: PathBuf = "./static/register.html".parse()?;
     Ok(NamedFile::open(path)?)
 }
 
+// For now, only for testing purposes.
+#[get("/board_game")]
+async fn index_board_game(_req: HttpRequest) -> actix_web::Result<NamedFile> {
+    let path: PathBuf = "./static/add_board_game.html".parse()?;
+    Ok(NamedFile::open(path)?)
+}
+
+// For now, only for testing purposes.
 #[get("/secret")]
 async fn secret(Auth(user): Auth) -> HttpResponse {
     HttpResponse::Ok().body(format!("Hello, {}!", user.sub))
 }
 
+#[post("/board_game/save")]
+async fn save_board_game(
+    MultipartForm(form): MultipartForm<BoardGameFormData>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    let file_name = match form.image.file_name {
+        Some(name) => name,
+        None => return HttpResponse::BadRequest().body("File name is missing"),
+    };
+
+    // Save the image on the server.
+    let path = format!("./static/img/{}", file_name);
+    if form.image.file.persist(path).is_err() {
+        return HttpResponse::InternalServerError().body("Failed to save file");
+    }
+
+    let additional_info = form.additional_info.into_inner();
+    let additional_info = if additional_info.is_empty() {
+        None
+    } else {
+        Some(additional_info)
+    };
+    let board_game = BoardGameActiveModel {
+        title: Set(form.title.into_inner()),
+        weight: Set(form.weight.into_inner()),
+        photo_filename: Set(file_name),
+        min_players: Set(form.min_players.into_inner()),
+        max_players: Set(form.max_players.into_inner()),
+        min_playtime: Set(form.min_playtime.into_inner()),
+        max_playtime: Set(form.max_playtime.into_inner()),
+        additional_info: Set(additional_info),
+        ..Default::default()
+    };
+
+    match data.db.save_board_game(board_game).await {
+        Ok(_) => HttpResponse::Ok().into(),
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Failed to save board game into database")
+        }
+    }
+}
+
 #[post("/user/login")]
-async fn login(form: web::Form<LoginFormData>, data: web::Data<AppState>) -> HttpResponse {
+async fn login(form: Form<LoginFormData>, data: Data<AppState>) -> HttpResponse {
     match data.db.get_user(form.id).await {
         Ok(Some(user)) => match verify_password(form.password.clone(), user.password_hash) {
             Ok(true) => match generate_jwt(user.id, user.is_admin) {
