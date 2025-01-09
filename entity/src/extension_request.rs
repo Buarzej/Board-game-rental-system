@@ -2,11 +2,13 @@
 
 use sea_orm::entity::prelude::*;
 use sea_orm::prelude::async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "extension_request")]
 pub struct Model {
     #[sea_orm(primary_key)]
+    #[serde(skip_deserializing)]
     pub id: i32,
     #[sea_orm(unique)]
     pub rental_id: i32,

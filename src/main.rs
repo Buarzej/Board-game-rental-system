@@ -19,15 +19,18 @@ use sea_orm::ActiveValue::Set;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+const HAS_TOKEN: bool = false;
+const HAS_ADMIN_TOKEN: bool = true;
+
 #[derive(Debug, Clone)]
 struct AppState {
     db: DatabaseManager,
 }
 
 // Struct for authenticating clients' requests.
-struct Auth(Claims);
+struct Auth<const IS_ADMIN: bool>(Claims);
 
-impl FromRequest for Auth {
+impl<const IS_ADMIN: bool> FromRequest for Auth<IS_ADMIN> {
     type Error = actix_web::Error;
     type Future = Ready<Result<Self, Self::Error>>;
 
@@ -40,8 +43,13 @@ impl FromRequest for Auth {
 
         match token {
             Some(token) => match verify_jwt(token) {
-                Ok(claims) => ready(Ok(Auth(claims))),
-                Err(_) => ready(Err(actix_web::error::ErrorUnauthorized("Invalid token"))),
+                Ok(claims) => {
+                    if IS_ADMIN && !claims.is_admin {
+                        return ready(Err(actix_web::error::ErrorForbidden("Insufficient privileges")));
+                    }
+                    ready(Ok(Self(claims)))
+                }
+                Err(e) => ready(Err(actix_web::error::ErrorUnauthorized(format!("Invalid token: {}", e)))),
             },
             None => ready(Err(actix_web::error::ErrorUnauthorized(
                 "No token provided",
@@ -102,6 +110,7 @@ async fn main() -> std::io::Result<()> {
                 web::scope("/api")
                     .service(register)
                     .service(login)
+                    .service(get_user)
                     .service(save_board_game),
             )
     })
@@ -133,8 +142,57 @@ async fn index_board_game(_req: HttpRequest) -> actix_web::Result<NamedFile> {
 
 // For now, only for testing purposes.
 #[get("/secret")]
-async fn secret(Auth(user): Auth) -> HttpResponse {
+async fn secret(Auth(user): Auth<HAS_TOKEN>) -> HttpResponse {
     HttpResponse::Ok().body(format!("Hello, {}!", user.sub))
+}
+
+#[post("/user/login")]
+async fn login(form: Form<LoginFormData>, data: Data<AppState>) -> HttpResponse {
+    match data.db.get_user(form.id).await {
+        Ok(Some(user)) => match verify_password(form.password.clone(), user.password_hash) {
+            Ok(true) => match generate_jwt(user.id, user.is_admin) {
+                Ok(token) => HttpResponse::Ok().body(token),
+                Err(_) => HttpResponse::InternalServerError().body("Failed to generate JWT"),
+            },
+            Ok(false) => HttpResponse::Unauthorized().body("Invalid password"),
+            Err(_) => HttpResponse::InternalServerError().body("Failed to verify password"),
+        },
+        Ok(None) => HttpResponse::Unauthorized().body("User not found"),
+        Err(_) => HttpResponse::InternalServerError().body("Failed to get user data from database"),
+    }
+}
+
+#[post("/user/register")]
+async fn register(form: Form<RegisterFormData>, data: Data<AppState>) -> HttpResponse {
+    let password_hash = match hash_password(form.password.clone()) {
+        Ok(hash) => hash,
+        Err(_) => return HttpResponse::InternalServerError().body("Failed to hash password"),
+    };
+
+    let user = UserActiveModel {
+        id: Set(form.id),
+        name: Set(form.name.clone()),
+        surname: Set(form.surname.clone()),
+        email: Set(form.email.clone()),
+        password_hash: Set(password_hash),
+        ..Default::default()
+    };
+
+    match data.db.insert_user(user).await {
+        Ok(_) => HttpResponse::Ok().into(),
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Failed to save user data into database")
+        }
+    }
+}
+
+#[get("/user/get/{id}")]
+async fn get_user(id: web::Path<i32>, Auth(_user): Auth<HAS_ADMIN_TOKEN>, data: Data<AppState>) -> HttpResponse {
+    match data.db.get_user(id.into_inner()).await {
+        Ok(Some(user)) => HttpResponse::Ok().json(user),
+        Ok(None) => HttpResponse::NotFound().body("User not found"),
+        Err(_) => HttpResponse::InternalServerError().body("Failed to get user data from database"),
+    }
 }
 
 #[post("/board_game/save")]
@@ -175,46 +233,6 @@ async fn save_board_game(
         Ok(_) => HttpResponse::Ok().into(),
         Err(_) => {
             HttpResponse::InternalServerError().body("Failed to save board game into database")
-        }
-    }
-}
-
-#[post("/user/login")]
-async fn login(form: Form<LoginFormData>, data: Data<AppState>) -> HttpResponse {
-    match data.db.get_user(form.id).await {
-        Ok(Some(user)) => match verify_password(form.password.clone(), user.password_hash) {
-            Ok(true) => match generate_jwt(user.id, user.is_admin) {
-                Ok(token) => HttpResponse::Ok().body(token),
-                Err(_) => HttpResponse::InternalServerError().body("Failed to generate JWT"),
-            },
-            Ok(false) => HttpResponse::Unauthorized().body("Invalid password"),
-            Err(_) => HttpResponse::InternalServerError().body("Failed to verify password"),
-        },
-        Ok(None) => HttpResponse::Unauthorized().body("User not found"),
-        Err(_) => HttpResponse::InternalServerError().body("Failed to get user data from database"),
-    }
-}
-
-#[post("/user/register")]
-async fn register(form: web::Form<RegisterFormData>, data: web::Data<AppState>) -> HttpResponse {
-    let password_hash = match hash_password(form.password.clone()) {
-        Ok(hash) => hash,
-        Err(_) => return HttpResponse::InternalServerError().body("Failed to hash password"),
-    };
-
-    let user = UserActiveModel {
-        id: Set(form.id),
-        name: Set(form.name.clone()),
-        surname: Set(form.surname.clone()),
-        email: Set(form.email.clone()),
-        password_hash: Set(password_hash),
-        ..Default::default()
-    };
-
-    match data.db.insert_user(user).await {
-        Ok(_) => HttpResponse::Ok().into(),
-        Err(_) => {
-            HttpResponse::InternalServerError().body("Failed to save user data into database")
         }
     }
 }
