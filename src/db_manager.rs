@@ -16,6 +16,7 @@ use sea_orm::{
     FromQueryResult, Iterable, QueryFilter, QueryOrder, QuerySelect, RelationTrait,
     TransactionTrait,
 };
+use serde::{Deserialize, Serialize};
 
 const PENALTY_THRESHOLD: u8 = 2;
 
@@ -407,7 +408,7 @@ impl DatabaseManager {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, FromQueryResult)]
+#[derive(Debug, Eq, PartialEq, FromQueryResult, Serialize, Deserialize)]
 pub struct GetBoardGamesQueryResult {
     id: i32,
     title: String,
@@ -420,7 +421,7 @@ pub struct GetBoardGamesQueryResult {
     is_favourite: bool,
 }
 
-#[derive(Debug, Eq, PartialEq, FromQueryResult)]
+#[derive(Debug, Eq, PartialEq, FromQueryResult, Serialize, Deserialize)]
 pub struct GetRentalsQueryResult {
     id: i32,
     game_id: i32,
@@ -435,7 +436,7 @@ pub struct GetRentalsQueryResult {
     extension_date: Option<Date>,
 }
 
-#[derive(Debug, Eq, PartialEq, FromQueryResult)]
+#[derive(Debug, Eq, PartialEq, FromQueryResult, Serialize, Deserialize)]
 pub struct GetUserRentalsQueryResult {
     id: i32,
     game_id: i32,
@@ -445,10 +446,10 @@ pub struct GetUserRentalsQueryResult {
     title: String,
     photo_filename: String,
     extension_date: Option<Date>,
-    is_favorite: bool,
+    is_favourite: bool,
 }
 
-#[derive(Debug, Eq, PartialEq, FromQueryResult)]
+#[derive(Debug, Eq, PartialEq, FromQueryResult, Serialize, Deserialize)]
 pub struct GetUserRentalsAdminQueryResult {
     id: i32,
     game_id: i32,
@@ -460,7 +461,7 @@ pub struct GetUserRentalsAdminQueryResult {
     extension_date: Option<Date>,
 }
 
-#[derive(Debug, Eq, PartialEq, FromQueryResult)]
+#[derive(Debug, Eq, PartialEq, FromQueryResult, Serialize, Deserialize)]
 pub struct GetRentalHistoryQueryResult {
     id: i32,
     game_id: i32,
@@ -474,7 +475,7 @@ pub struct GetRentalHistoryQueryResult {
     surname: String,
 }
 
-#[derive(Debug, Eq, PartialEq, FromQueryResult)]
+#[derive(Debug, Eq, PartialEq, FromQueryResult, Serialize, Deserialize)]
 pub struct GetUserRentalHistoryQueryResult {
     id: i32,
     game_id: i32,
@@ -483,10 +484,10 @@ pub struct GetUserRentalHistoryQueryResult {
     picked_up: bool,
     title: String,
     photo_filename: String,
-    is_favorite: bool,
+    is_favourite: bool,
 }
 
-#[derive(Debug, Eq, PartialEq, FromQueryResult)]
+#[derive(Debug, Eq, PartialEq, FromQueryResult, Serialize, Deserialize)]
 pub struct GetUserRentalHistoryAdminQueryResult {
     id: i32,
     game_id: i32,
