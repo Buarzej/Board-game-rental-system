@@ -72,8 +72,9 @@ pub(crate) fn verify_password(
         .is_ok())
 }
 
+/// Sends a confirmation email to the given email address.
 pub(crate) fn send_confirmation_email(
-    id: i32,
+    user_id: i32,
     email: String,
     token: Uuid,
 ) -> Result<(), SmtpError> {
@@ -101,7 +102,7 @@ pub(crate) fn send_confirmation_email(
     let confirmation_link = format!(
         "{}/api/user/confirm/{}/{}",
         env::var("FRONTEND_URL").unwrap(),
-        id,
+        user_id,
         token
     );
 
