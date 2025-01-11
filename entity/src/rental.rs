@@ -15,6 +15,8 @@ pub struct Model {
     pub user_id: i32,
     pub rental_date: Date,
     pub return_date: Date,
+    #[sea_orm(nullable)]
+    pub extension_date: Option<Date>,
     #[sea_orm(default_value = false)]
     pub picked_up: bool,
 }
@@ -29,8 +31,6 @@ pub enum Relation {
         on_delete = "Cascade"
     )]
     BoardGame,
-    #[sea_orm(has_one = "super::extension_request::Entity")]
-    ExtensionRequest,
     #[sea_orm(
         belongs_to = "super::user::Entity",
         from = "Column::UserId",
@@ -44,12 +44,6 @@ pub enum Relation {
 impl Related<super::board_game::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::BoardGame.def()
-    }
-}
-
-impl Related<super::extension_request::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::ExtensionRequest.def()
     }
 }
 
@@ -67,6 +61,12 @@ impl ActiveModelBehavior for ActiveModel {
     {
         if self.rental_date.as_ref() > self.return_date.as_ref() {
             return Err(DbErr::Custom("rental_date cannot be greater than return_date".into()));
+        }
+        
+        if let Some(extension_date) = self.extension_date.as_ref() {
+            if self.return_date.as_ref() >= extension_date {
+                return Err(DbErr::Custom("return_date cannot be greater than or equal to extension_date".into()));
+            }
         }
 
         Ok(self)

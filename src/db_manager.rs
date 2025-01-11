@@ -1,13 +1,10 @@
 use entity::board_game::{ActiveModel as BoardGameActiveModel, Model as BoardGameModel};
-use entity::extension_request::{
-    ActiveModel as ExtensionRequestActiveModel, Model as ExtensionRequestModel,
-};
 use entity::favourite::ActiveModel as FavouriteActiveModel;
-use entity::prelude::{BoardGame, ExtensionRequest, Favourite, Rental, RentalHistory, User};
+use entity::prelude::{BoardGame, Favourite, Rental, RentalHistory, User};
 use entity::rental::{ActiveModel as RentalActiveModel, Model as RentalModel};
 use entity::rental_history::ActiveModel as RentalHistoryActiveModel;
 use entity::user::{ActiveModel as UserActiveModel, Model as UserModel};
-use entity::{board_game, extension_request, favourite, rental, rental_history, user};
+use entity::{board_game, favourite, rental, rental_history, user};
 use migration::{Expr, JoinType, Migrator, MigratorTrait};
 use sea_orm::prelude::Date;
 use sea_orm::sea_query::IntoCondition;
@@ -173,16 +170,14 @@ impl DatabaseManager {
         Ok(rental)
     }
 
-    /// Retrieves all rentals from the database, along with the information
-    /// about associated board games, users, and extension requests.
+    /// Retrieves all rentals from the database, along with
+    /// the information about associated board games and users.
     pub(crate) async fn get_rentals(&self) -> Result<Vec<GetRentalsQueryResult>, DbErr> {
         let rentals = Rental::find()
             .columns([board_game::Column::Title, board_game::Column::PhotoFilename])
             .columns([user::Column::Name, user::Column::Surname])
-            .column(extension_request::Column::ExtensionDate)
             .inner_join(BoardGame)
             .inner_join(User)
-            .left_join(ExtensionRequest)
             .order_by_asc(rental::Column::RentalDate)
             .into_model::<GetRentalsQueryResult>()
             .all(&self.db)
@@ -192,7 +187,7 @@ impl DatabaseManager {
 
     /// Retrieves all rentals from the database for the given user ID,
     /// along with the information about associated board games,
-    /// extension requests, and whether they are in the user's favourites.
+    /// and whether they are in the user's favourites.
     pub(crate) async fn get_user_rentals(
         &self,
         user_id: i32,
@@ -201,7 +196,6 @@ impl DatabaseManager {
             .select_only()
             .columns(rental::Column::iter().filter(|c| !matches!(c, rental::Column::UserId)))
             .columns([board_game::Column::Title, board_game::Column::PhotoFilename])
-            .column(extension_request::Column::ExtensionDate)
             .expr_as(
                 Expr::case(
                     Expr::col((favourite::Entity, favourite::Column::UserId)).is_not_null(),
@@ -211,7 +205,6 @@ impl DatabaseManager {
                 "is_favourite",
             )
             .inner_join(BoardGame)
-            .left_join(ExtensionRequest)
             .join(
                 JoinType::LeftJoin,
                 board_game::Relation::Favourite
@@ -231,7 +224,7 @@ impl DatabaseManager {
     }
 
     /// Retrieves all rentals from the database for the given user ID,
-    /// along with the information about associated board games and extension requests.
+    /// along with the information about associated board games.
     /// Should be used by admin as it doesn't contain information about user favourites.
     pub(crate) async fn get_user_rentals_admin(
         &self,
@@ -241,9 +234,7 @@ impl DatabaseManager {
             .select_only()
             .columns(rental::Column::iter().filter(|c| !matches!(c, rental::Column::UserId)))
             .columns([board_game::Column::Title, board_game::Column::PhotoFilename])
-            .column(extension_request::Column::ExtensionDate)
             .inner_join(BoardGame)
-            .left_join(ExtensionRequest)
             .filter(rental::Column::UserId.eq(user_id))
             .order_by_asc(rental::Column::RentalDate)
             .into_model::<GetUserRentalsAdminQueryResult>()
@@ -366,30 +357,6 @@ impl DatabaseManager {
         Ok(())
     }
 
-    /// Saves a rental history entry to the database. Handles both insertions and updates.
-    pub(crate) async fn save_extension_request(
-        &self,
-        extension_request: ExtensionRequestActiveModel,
-    ) -> Result<(), DbErr> {
-        extension_request.save(&self.db).await?;
-        Ok(())
-    }
-
-    /// Retrieves an extension request of the given ID from the database.
-    pub(crate) async fn get_extension_request(
-        &self,
-        id: i32,
-    ) -> Result<Option<ExtensionRequestModel>, DbErr> {
-        let extension_request = ExtensionRequest::find_by_id(id).one(&self.db).await?;
-        Ok(extension_request)
-    }
-
-    /// Deletes an extension request of the given ID from the database.
-    pub(crate) async fn delete_extension_request(&self, id: i32) -> Result<(), DbErr> {
-        ExtensionRequest::delete_by_id(id).exec(&self.db).await?;
-        Ok(())
-    }
-
     /// Saves a favourite to the database.
     pub(crate) async fn save_favourite(
         &self,
@@ -428,12 +395,12 @@ pub struct GetRentalsQueryResult {
     user_id: i32,
     rental_date: Date,
     return_date: Date,
+    extension_date: Option<Date>,
     picked_up: bool,
     title: String,
     photo_filename: String,
     name: String,
     surname: String,
-    extension_date: Option<Date>,
 }
 
 #[derive(Debug, Eq, PartialEq, FromQueryResult, Serialize, Deserialize)]
@@ -442,10 +409,10 @@ pub struct GetUserRentalsQueryResult {
     game_id: i32,
     rental_date: Date,
     return_date: Date,
+    extension_date: Option<Date>,
     picked_up: bool,
     title: String,
     photo_filename: String,
-    extension_date: Option<Date>,
     is_favourite: bool,
 }
 
@@ -455,10 +422,10 @@ pub struct GetUserRentalsAdminQueryResult {
     game_id: i32,
     rental_date: Date,
     return_date: Date,
+    extension_date: Option<Date>,
     picked_up: bool,
     title: String,
     photo_filename: String,
-    extension_date: Option<Date>,
 }
 
 #[derive(Debug, Eq, PartialEq, FromQueryResult, Serialize, Deserialize)]

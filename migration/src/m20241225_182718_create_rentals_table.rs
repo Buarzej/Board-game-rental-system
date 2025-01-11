@@ -11,6 +11,7 @@ pub enum Rental {
     UserId,
     RentalDate,
     ReturnDate,
+    ExtensionDate,
     PickedUp,
 }
 
@@ -39,6 +40,7 @@ impl MigrationTrait for Migration {
                     .col(integer(Rental::UserId))
                     .col(date(Rental::RentalDate))
                     .col(date(Rental::ReturnDate))
+                    .col(date_null(Rental::ExtensionDate))
                     .col(boolean(Rental::PickedUp).default(false))
                     .foreign_key(
                         ForeignKey::create()
