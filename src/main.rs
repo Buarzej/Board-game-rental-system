@@ -11,16 +11,15 @@ use actix_web::dev::Payload;
 use actix_web::http::header;
 use actix_web::web::{Data, Form};
 use actix_web::{get, post, web, App, FromRequest, HttpRequest, HttpResponse, HttpServer};
-use chrono::{NaiveDate as Date, NaiveDate};
+use chrono::NaiveDate as Date;
 use dotenv::dotenv;
 use entity::board_game::ActiveModel as BoardGameActiveModel;
 use entity::favourite::ActiveModel as FavouriteActiveModel;
 use entity::rental::ActiveModel as RentalActiveModel;
-use entity::rental_history::ActiveModel as RentalHistoryActiveModel;
 use entity::user::ActiveModel as UserActiveModel;
 use futures::future::{ready, Ready};
 use sea_orm::ActiveValue::Set;
-use sea_orm::{ActiveValue, NotSet};
+use sea_orm::NotSet;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -119,6 +118,13 @@ struct BoardGameFormData {
 }
 
 #[derive(Debug, Deserialize)]
+struct RentalFormData {
+    game_id: i32,
+    rental_date: String,
+    return_date: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct ExtensionRequestFormData {
     extension_date: String,
 }
@@ -157,6 +163,11 @@ async fn main() -> std::io::Result<()> {
                     .service(get_board_games)
                     .service(get_board_games_admin)
                     .service(delete_board_game)
+                    .service(save_rental)
+                    .service(get_rentals)
+                    .service(get_my_rentals)
+                    .service(get_user_rentals)
+                    .service(archive_rental)
                     .service(get_rental_history)
                     .service(get_my_rental_history)
                     .service(get_user_rental_history)
@@ -448,7 +459,96 @@ async fn delete_board_game(
     }
 }
 
-// TODO: handle rentals
+/// id = 0 ==> insert new rental
+#[post("/rental/save/{id}")]
+async fn save_rental(
+    id: web::Path<i32>,
+    form: Form<RentalFormData>,
+    Auth(user): Auth<HAS_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    let id = id.into_inner();
+    let rental_date = match Date::parse_from_str(form.rental_date.as_str(), "%Y-%m-%d") {
+        Ok(date) => date,
+        Err(_) => return HttpResponse::BadRequest().body("Invalid date format"),
+    };
+    let return_date = match Date::parse_from_str(form.return_date.as_str(), "%Y-%m-%d") {
+        Ok(date) => date,
+        Err(_) => return HttpResponse::BadRequest().body("Invalid date format"),
+    };
+
+    let rental = RentalActiveModel {
+        id: if id == 0 { NotSet } else { Set(id) },
+        game_id: Set(form.game_id),
+        user_id: Set(user.sub),
+        rental_date: Set(rental_date),
+        return_date: Set(return_date),
+        extension_date: Set(None),
+        ..Default::default()
+    };
+
+    match data.db.save_rental(rental).await {
+        Ok(_) => HttpResponse::Ok().into(),
+        Err(_) => HttpResponse::InternalServerError().body("Failed to save rental into database"),
+    }
+}
+
+#[get("/rental/get_all")]
+async fn get_rentals(Auth(_user): Auth<HAS_ADMIN_TOKEN>, data: Data<AppState>) -> HttpResponse {
+    match data.db.get_rentals().await {
+        Ok(rentals) => HttpResponse::Ok().json(rentals),
+        Err(_) => HttpResponse::InternalServerError().body("Failed to get rentals from database"),
+    }
+}
+
+#[get("/rental/get")]
+async fn get_my_rentals(Auth(user): Auth<HAS_TOKEN>, data: Data<AppState>) -> HttpResponse {
+    match data.db.get_user_rentals(user.sub).await {
+        Ok(rentals) => HttpResponse::Ok().json(rentals),
+        Err(_) => HttpResponse::InternalServerError().body("Failed to get rentals from database"),
+    }
+}
+
+#[get("/rental/get/{id}")]
+async fn get_user_rentals(
+    id: web::Path<i32>,
+    Auth(_user): Auth<HAS_ADMIN_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    let id = id.into_inner();
+    match data.db.get_user_rentals_admin(id).await {
+        Ok(rentals) => HttpResponse::Ok().json(rentals),
+        Err(_) => HttpResponse::InternalServerError().body("Failed to get rentals from database"),
+    }
+}
+
+#[get("/rental/archive/{id}")]
+async fn archive_rental(
+    id: web::Path<i32>,
+    Auth(user): Auth<HAS_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    // Non-admin user can only archive their own rentals that have not been picked up.
+    let id = id.into_inner();
+    if !user.is_admin {
+        let rental = match data.db.get_rental(id).await {
+            Ok(Some(rental)) => rental,
+            Ok(None) => return HttpResponse::NotFound().body("Rental not found"),
+            Err(_) => {
+                return HttpResponse::InternalServerError()
+                    .body("Failed to get rental data from database")
+            }
+        };
+        if rental.user_id != user.sub || rental.picked_up {
+            return HttpResponse::Forbidden().body("Insufficient privileges");
+        }
+    }
+
+    match data.db.archive_rental(id).await {
+        Ok(_) => HttpResponse::Ok().into(),
+        Err(_) => HttpResponse::InternalServerError().body("Failed to delete rental from database"),
+    }
+}
 
 #[get("/history/get_all")]
 async fn get_rental_history(
