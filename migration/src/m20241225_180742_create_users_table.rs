@@ -11,6 +11,7 @@ pub enum User {
     Surname,
     Email,
     PasswordHash,
+    ConfirmationToken,
     PenaltyPoints,
     IsAdmin,
 }
@@ -28,6 +29,7 @@ impl MigrationTrait for Migration {
                     .col(string(User::Surname))
                     .col(string_uniq(User::Email))
                     .col(string(User::PasswordHash))
+                    .col(uuid_null(User::ConfirmationToken))
                     .col(tiny_unsigned(User::PenaltyPoints).default(0))
                     .col(boolean(User::IsAdmin).default(false))
                     .to_owned(),

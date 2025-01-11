@@ -14,6 +14,8 @@ pub struct Model {
     #[sea_orm(unique)]
     pub email: String,
     pub password_hash: String,
+    #[sea_orm(nullable)]
+    pub confirmation_token: Option<Uuid>,
     #[sea_orm(default_value = 0)]
     pub penalty_points: u8,
     #[sea_orm(default_value = false)]
