@@ -3,8 +3,15 @@ use argon2::password_hash::SaltString;
 use argon2::{password_hash, Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use chrono::{Duration, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
+use lettre::transport::smtp::{authentication::Credentials, Error as SmtpError};
+
+use lettre::{Message, SmtpTransport, Transport};
 use serde::{Deserialize, Serialize};
 use std::env;
+use lettre::message::Mailbox;
+use uuid::Uuid;
+
+const CONFIRMATION_EMAIL_SUBJECT: &str = "Potwierdź swój email";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Claims {
@@ -65,6 +72,48 @@ pub(crate) fn verify_password(
         .is_ok())
 }
 
-// TODO: handle email verification
+pub(crate) fn send_confirmation_email(
+    id: i32,
+    email: String,
+    token: Uuid,
+) -> Result<(), SmtpError> {
+    let credentials = Credentials::new(
+        env::var("MAILER_USERNAME").unwrap(),
+        env::var("MAILER_PASSWORD").unwrap(),
+    );
 
-// TODO: handle forgot password
+    let smtp_server = env::var("MAILER_HOST").unwrap();
+    let smtp_port = env::var("MAILER_PORT").unwrap().parse::<u16>().unwrap();
+
+    let mailer = SmtpTransport::starttls_relay(&smtp_server)?
+        .port(smtp_port)
+        .credentials(credentials)
+        .build();
+
+    let from: Mailbox = match env::var("MAILER_USERNAME").unwrap().parse() {
+        Ok(mailbox) => mailbox,
+        Err(e) => panic!("Invalid email address: {}", e),
+    };
+    let to: Mailbox = match email.parse() {
+        Ok(mailbox) => mailbox,
+        Err(e) => panic!("Invalid email address: {}", e),
+    };
+    let confirmation_link = format!(
+        "{}/api/user/confirm/{}/{}",
+        env::var("FRONTEND_URL").unwrap(),
+        id,
+        token
+    );
+
+    let email = Message::builder()
+        .from(from)
+        .to(to)
+        .subject(CONFIRMATION_EMAIL_SUBJECT)
+        .body(confirmation_link)
+        .unwrap();
+
+    match mailer.send(&email) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(e),
+    }
+}

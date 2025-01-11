@@ -1,7 +1,9 @@
 mod auth;
 mod db_manager;
 
-use crate::auth::{generate_jwt, hash_password, verify_jwt, verify_password, Claims};
+use crate::auth::{
+    generate_jwt, hash_password, send_confirmation_email, verify_jwt, verify_password, Claims,
+};
 use crate::db_manager::DatabaseManager;
 use actix_files::{Files, NamedFile};
 use actix_multipart::form::tempfile::TempFile;
@@ -20,11 +22,21 @@ use entity::user::ActiveModel as UserActiveModel;
 use futures::future::{ready, Ready};
 use sea_orm::ActiveValue::Set;
 use sea_orm::NotSet;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::path::PathBuf;
+use uuid::Uuid;
 
 const HAS_TOKEN: bool = false;
 const HAS_ADMIN_TOKEN: bool = true;
+const REQUIRED_ENV_VARS: [&str; 7] = [
+    "JWT_SECRET",
+    "MAILER_HOST",
+    "MAILER_PORT",
+    "MAILER_USERNAME",
+    "MAILER_EMAIL",
+    "MAILER_PASSWORD",
+    "FRONTEND_URL",
+];
 
 #[derive(Debug, Clone)]
 struct AppState {
@@ -133,8 +145,10 @@ struct ExtensionRequestFormData {
 async fn main() -> std::io::Result<()> {
     // Load all the necessary resources.
     dotenv().ok();
-    if std::env::var("JWT_SECRET").is_err() {
-        panic!("JWT_SECRET is not set");
+    for var in REQUIRED_ENV_VARS.iter() {
+        if std::env::var(var).is_err() {
+            panic!("{} is not set", var);
+        }
     }
     let db = DatabaseManager::new(&std::env::var("DATABASE_URL").expect("DATABASE_URL is not set"))
         .await
@@ -144,7 +158,7 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
-            .app_data(web::Data::new(state.clone()))
+            .app_data(Data::new(state.clone()))
             .service(Files::new("/static", "./static/img"))
             .service(index_login)
             .service(index_register)
@@ -153,11 +167,13 @@ async fn main() -> std::io::Result<()> {
                 web::scope("/api")
                     .service(login)
                     .service(register)
+                    .service(confirm_user)
                     .service(get_user)
                     .service(get_users)
                     .service(is_penalized)
                     .service(change_password)
                     .service(update_user)
+                    .service(delete_user)
                     .service(save_board_game)
                     .service(get_board_game)
                     .service(get_board_games)
@@ -208,14 +224,22 @@ async fn index_board_game(_req: HttpRequest) -> actix_web::Result<NamedFile> {
 #[post("/user/login")]
 async fn login(form: Form<LoginFormData>, data: Data<AppState>) -> HttpResponse {
     match data.db.get_user(form.id).await {
-        Ok(Some(user)) => match verify_password(form.password.clone(), user.password_hash) {
-            Ok(true) => match generate_jwt(user.id, user.is_admin) {
-                Ok(token) => HttpResponse::Ok().body(token),
-                Err(_) => HttpResponse::InternalServerError().body("Failed to generate JWT"),
-            },
-            Ok(false) => HttpResponse::Unauthorized().body("Invalid password"),
-            Err(_) => HttpResponse::InternalServerError().body("Failed to verify password"),
-        },
+        Ok(Some(user)) => {
+            if user.confirmation_token.is_some() {
+                HttpResponse::Unauthorized().body("User not confirmed")
+            } else {
+                match verify_password(form.password.clone(), user.password_hash) {
+                    Ok(true) => match generate_jwt(user.id, user.is_admin) {
+                        Ok(token) => HttpResponse::Ok().body(token),
+                        Err(_) => {
+                            HttpResponse::InternalServerError().body("Failed to generate JWT")
+                        }
+                    },
+                    Ok(false) => HttpResponse::Unauthorized().body("Invalid password"),
+                    Err(_) => HttpResponse::InternalServerError().body("Failed to verify password"),
+                }
+            }
+        }
         Ok(None) => HttpResponse::Unauthorized().body("User not found"),
         Err(_) => HttpResponse::InternalServerError().body("Failed to get user data from database"),
     }
@@ -228,17 +252,54 @@ async fn register(form: Form<RegisterFormData>, data: Data<AppState>) -> HttpRes
         Err(_) => return HttpResponse::InternalServerError().body("Failed to hash password"),
     };
 
+    let uuid = Uuid::new_v4();
     let user = UserActiveModel {
         id: Set(form.id),
         name: Set(form.name.clone()),
         surname: Set(form.surname.clone()),
         email: Set(form.email.clone()),
         password_hash: Set(password_hash),
+        confirmation_token: Set(Some(uuid)),
         ..Default::default()
     };
 
     match data.db.insert_user(user).await {
-        Ok(_) => HttpResponse::Ok().into(),
+        Ok(_) => match send_confirmation_email(form.id, form.email.clone(), uuid) {
+            Ok(_) => HttpResponse::Ok().body("User registered"),
+            Err(e) => {
+                HttpResponse::InternalServerError().body(format!("Failed to send email: {}", e))
+            }
+        },
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Failed to save user data into database")
+        }
+    }
+}
+
+#[get("/user/confirm/{id}/{token}")]
+async fn confirm_user(path: web::Path<(i32, Uuid)>, data: Data<AppState>) -> HttpResponse {
+    let (id, token) = path.into_inner();
+    let user = match data.db.get_user(id).await {
+        Ok(Some(user)) => user,
+        Ok(None) => return HttpResponse::NotFound().body("User not found"),
+        Err(_) => {
+            return HttpResponse::InternalServerError()
+                .body("Failed to get user data from database")
+        }
+    };
+
+    if user.confirmation_token != Some(token) {
+        return HttpResponse::Unauthorized().body("Invalid token");
+    }
+
+    let user = UserActiveModel {
+        id: Set(id),
+        confirmation_token: Set(None),
+        ..Default::default()
+    };
+
+    match data.db.update_user(user).await {
+        Ok(_) => HttpResponse::Ok().body("User confirmed"),
         Err(_) => {
             HttpResponse::InternalServerError().body("Failed to save user data into database")
         }
@@ -349,12 +410,28 @@ async fn update_user(
         password_hash,
         penalty_points: Set(form.penalty_points),
         is_admin: Set(form.is_admin),
+        ..Default::default()
     };
 
     match data.db.update_user(user).await {
         Ok(_) => HttpResponse::Ok().into(),
         Err(_) => {
             HttpResponse::InternalServerError().body("Failed to save user data into database")
+        }
+    }
+}
+
+#[get("/user/delete/{id}")]
+async fn delete_user(
+    id: web::Path<i32>,
+    Auth(_user): Auth<HAS_ADMIN_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    let id = id.into_inner();
+    match data.db.delete_user(id).await {
+        Ok(_) => HttpResponse::Ok().into(),
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Failed to delete user from database")
         }
     }
 }
@@ -641,7 +718,7 @@ async fn save_extension_request(
 #[get("/extension/accept/{id}")]
 async fn accept_extension_request(
     id: web::Path<i32>,
-    Auth(user): Auth<HAS_ADMIN_TOKEN>,
+    Auth(_user): Auth<HAS_ADMIN_TOKEN>,
     data: Data<AppState>,
 ) -> HttpResponse {
     let rental_id = id.into_inner();

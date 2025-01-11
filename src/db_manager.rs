@@ -158,18 +158,6 @@ impl DatabaseManager {
         Ok(rental)
     }
 
-    /// Retrieves the rental of the given game ID from the database.
-    pub(crate) async fn get_game_rental_status(
-        &self,
-        game_id: i32,
-    ) -> Result<Option<RentalModel>, DbErr> {
-        let rental = Rental::find()
-            .filter(rental::Column::GameId.eq(game_id))
-            .one(&self.db)
-            .await?;
-        Ok(rental)
-    }
-
     /// Retrieves all rentals from the database, along with
     /// the information about associated board games and users.
     pub(crate) async fn get_rentals(&self) -> Result<Vec<GetRentalsQueryResult>, DbErr> {
