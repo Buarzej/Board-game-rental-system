@@ -11,8 +11,12 @@ use actix_web::dev::Payload;
 use actix_web::http::header;
 use actix_web::web::{Data, Form};
 use actix_web::{get, post, web, App, FromRequest, HttpRequest, HttpResponse, HttpServer};
+use chrono::{NaiveDate as Date, NaiveDate};
 use dotenv::dotenv;
 use entity::board_game::ActiveModel as BoardGameActiveModel;
+use entity::favourite::ActiveModel as FavouriteActiveModel;
+use entity::rental::ActiveModel as RentalActiveModel;
+use entity::rental_history::ActiveModel as RentalHistoryActiveModel;
 use entity::user::ActiveModel as UserActiveModel;
 use futures::future::{ready, Ready};
 use sea_orm::ActiveValue::Set;
@@ -73,30 +77,18 @@ fn is_self_request(user: &Claims, id: i32) -> Result<(), HttpResponse> {
 }
 
 #[derive(Debug, Deserialize)]
+struct LoginFormData {
+    id: i32,
+    password: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct RegisterFormData {
     name: String,
     surname: String,
     id: i32,
     email: String,
     password: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct LoginFormData {
-    id: i32,
-    password: String,
-}
-
-#[derive(Debug, MultipartForm)]
-struct BoardGameFormData {
-    title: Text<String>,
-    weight: Text<u16>,
-    image: TempFile,
-    min_players: Text<u8>,
-    max_players: Text<u8>,
-    min_playtime: Text<u16>,
-    max_playtime: Text<u16>,
-    additional_info: Text<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,6 +104,23 @@ struct UpdateUserFormData {
     password: String,
     penalty_points: u8,
     is_admin: bool,
+}
+
+#[derive(Debug, MultipartForm)]
+struct BoardGameFormData {
+    title: Text<String>,
+    weight: Text<u16>,
+    image: TempFile,
+    min_players: Text<u8>,
+    max_players: Text<u8>,
+    min_playtime: Text<u16>,
+    max_playtime: Text<u16>,
+    additional_info: Text<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExtensionRequestFormData {
+    extension_date: String,
 }
 
 #[actix_web::main]
@@ -143,7 +152,20 @@ async fn main() -> std::io::Result<()> {
                     .service(is_penalized)
                     .service(change_password)
                     .service(update_user)
-                    .service(save_board_game),
+                    .service(save_board_game)
+                    .service(get_board_game)
+                    .service(get_board_games)
+                    .service(get_board_games_admin)
+                    .service(delete_board_game)
+                    .service(get_rental_history)
+                    .service(get_my_rental_history)
+                    .service(get_user_rental_history)
+                    .service(delete_rental_history)
+                    .service(save_extension_request)
+                    .service(accept_extension_request)
+                    .service(delete_extension_request)
+                    .service(save_favourite)
+                    .service(delete_favourite),
             )
     })
     .bind(("127.0.0.1", 8080))?
@@ -326,9 +348,12 @@ async fn update_user(
     }
 }
 
-#[post("/board_game/save")]
+/// id = 0 ==> insert new board game
+#[post("/board_game/save/{id}")]
 async fn save_board_game(
+    id: web::Path<i32>,
     MultipartForm(form): MultipartForm<BoardGameFormData>,
+    Auth(_user): Auth<HAS_ADMIN_TOKEN>,
     data: Data<AppState>,
 ) -> HttpResponse {
     let file_name = match form.image.file_name {
@@ -342,6 +367,7 @@ async fn save_board_game(
         return HttpResponse::InternalServerError().body("Failed to save file");
     }
 
+    let id = id.into_inner();
     let additional_info = form.additional_info.into_inner();
     let additional_info = if additional_info.is_empty() {
         None
@@ -349,6 +375,7 @@ async fn save_board_game(
         Some(additional_info)
     };
     let board_game = BoardGameActiveModel {
+        id: if id == 0 { NotSet } else { Set(id) },
         title: Set(form.title.into_inner()),
         weight: Set(form.weight.into_inner()),
         photo_filename: Set(file_name),
@@ -357,13 +384,260 @@ async fn save_board_game(
         min_playtime: Set(form.min_playtime.into_inner()),
         max_playtime: Set(form.max_playtime.into_inner()),
         additional_info: Set(additional_info),
-        ..Default::default()
     };
 
     match data.db.save_board_game(board_game).await {
         Ok(_) => HttpResponse::Ok().into(),
         Err(_) => {
             HttpResponse::InternalServerError().body("Failed to save board game into database")
+        }
+    }
+}
+
+#[get("/board_game/get/{id}")]
+async fn get_board_game(
+    id: web::Path<i32>,
+    Auth(_user): Auth<HAS_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    let id = id.into_inner();
+    match data.db.get_board_game(id).await {
+        Ok(Some(board_game)) => HttpResponse::Ok().json(board_game),
+        Ok(None) => HttpResponse::NotFound().body("Board game not found"),
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Failed to get board game data from database")
+        }
+    }
+}
+
+#[get("/board_game/get_all")]
+async fn get_board_games(Auth(user): Auth<HAS_TOKEN>, data: Data<AppState>) -> HttpResponse {
+    match data.db.get_board_games(user.sub).await {
+        Ok(board_games) => HttpResponse::Ok().json(board_games),
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Failed to get board games data from database")
+        }
+    }
+}
+
+#[get("/board_game/get_all_admin")]
+async fn get_board_games_admin(
+    Auth(_user): Auth<HAS_ADMIN_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    match data.db.get_board_games_admin().await {
+        Ok(board_games) => HttpResponse::Ok().json(board_games),
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Failed to get board games data from database")
+        }
+    }
+}
+
+#[get("/board_game/delete/{id}")]
+async fn delete_board_game(
+    id: web::Path<i32>,
+    Auth(_user): Auth<HAS_ADMIN_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    let id = id.into_inner();
+    match data.db.delete_board_game(id).await {
+        Ok(_) => HttpResponse::Ok().into(),
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Failed to delete board game from database")
+        }
+    }
+}
+
+// TODO: handle rentals
+
+#[get("/history/get_all")]
+async fn get_rental_history(
+    Auth(_user): Auth<HAS_ADMIN_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    match data.db.get_rental_history().await {
+        Ok(rental_history) => HttpResponse::Ok().json(rental_history),
+        Err(_) => HttpResponse::InternalServerError()
+            .body("Failed to get rental history data from database"),
+    }
+}
+
+#[get("/history/get")]
+async fn get_my_rental_history(Auth(user): Auth<HAS_TOKEN>, data: Data<AppState>) -> HttpResponse {
+    match data.db.get_user_rental_history(user.sub).await {
+        Ok(rental_history) => HttpResponse::Ok().json(rental_history),
+        Err(_) => HttpResponse::InternalServerError()
+            .body("Failed to get rental history data from database"),
+    }
+}
+
+#[get("/history/get/{id}")]
+async fn get_user_rental_history(
+    id: web::Path<i32>,
+    Auth(_user): Auth<HAS_ADMIN_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    let id = id.into_inner();
+    match data.db.get_user_rental_history_admin(id).await {
+        Ok(rental_history) => HttpResponse::Ok().json(rental_history),
+        Err(_) => HttpResponse::InternalServerError()
+            .body("Failed to get rental history data from database"),
+    }
+}
+
+#[get("/history/delete/{id}")]
+async fn delete_rental_history(
+    id: web::Path<i32>,
+    Auth(_user): Auth<HAS_ADMIN_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    let id = id.into_inner();
+    match data.db.delete_rental_history(id).await {
+        Ok(_) => HttpResponse::Ok().into(),
+        Err(_) => HttpResponse::InternalServerError()
+            .body("Failed to delete rental history data from database"),
+    }
+}
+
+#[post("/extension/save/{id}")]
+async fn save_extension_request(
+    id: web::Path<i32>,
+    form: Form<ExtensionRequestFormData>,
+    Auth(user): Auth<HAS_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    let rental_id = id.into_inner();
+    let rental = match data.db.get_rental(rental_id).await {
+        Ok(Some(rental)) => rental,
+        Ok(None) => return HttpResponse::NotFound().body("Related rental not found"),
+        Err(_) => {
+            return HttpResponse::InternalServerError()
+                .body("Failed to get rental data from database")
+        }
+    };
+
+    // Non-admin user can only modify their own rentals.
+    if !user.is_admin && rental.user_id != user.sub {
+        return HttpResponse::Forbidden().body("Insufficient privileges");
+    }
+
+    let extension_date = match Date::parse_from_str(form.extension_date.as_str(), "%Y-%m-%d") {
+        Ok(date) => date,
+        Err(_) => return HttpResponse::BadRequest().body("Invalid date format"),
+    };
+    let rental = RentalActiveModel {
+        id: Set(rental_id),
+        extension_date: Set(Some(extension_date)),
+        ..Default::default()
+    };
+
+    match data.db.save_rental(rental).await {
+        Ok(_) => HttpResponse::Ok().into(),
+        Err(_) => HttpResponse::InternalServerError()
+            .body("Failed to save extension request into database"),
+    }
+}
+
+#[get("/extension/accept/{id}")]
+async fn accept_extension_request(
+    id: web::Path<i32>,
+    Auth(user): Auth<HAS_ADMIN_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    let rental_id = id.into_inner();
+    let rental = match data.db.get_rental(rental_id).await {
+        Ok(Some(rental)) => rental,
+        Ok(None) => return HttpResponse::NotFound().body("Related rental not found"),
+        Err(_) => {
+            return HttpResponse::InternalServerError()
+                .body("Failed to get rental data from database")
+        }
+    };
+
+    let new_date = match rental.extension_date {
+        Some(date) => date,
+        None => return HttpResponse::BadRequest().body("Extension request not found"),
+    };
+
+    let rental = RentalActiveModel {
+        id: Set(rental_id),
+        return_date: Set(new_date),
+        extension_date: Set(None),
+        ..Default::default()
+    };
+
+    match data.db.save_rental(rental).await {
+        Ok(_) => HttpResponse::Ok().into(),
+        Err(_) => HttpResponse::InternalServerError()
+            .body("Failed to save extension request into database"),
+    }
+}
+
+#[get("/extension/delete/{id}")]
+async fn delete_extension_request(
+    id: web::Path<i32>,
+    Auth(user): Auth<HAS_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    let rental_id = id.into_inner();
+    let rental = match data.db.get_rental(rental_id).await {
+        Ok(Some(rental)) => rental,
+        Ok(None) => return HttpResponse::NotFound().body("Related rental not found"),
+        Err(_) => {
+            return HttpResponse::InternalServerError()
+                .body("Failed to get rental data from database")
+        }
+    };
+
+    // Non-admin user can only modify their own rentals.
+    if !user.is_admin && rental.user_id != user.sub {
+        return HttpResponse::Forbidden().body("Insufficient privileges");
+    }
+
+    let rental = RentalActiveModel {
+        id: Set(rental_id),
+        extension_date: Set(None),
+        ..Default::default()
+    };
+
+    match data.db.save_rental(rental).await {
+        Ok(_) => HttpResponse::Ok().into(),
+        Err(_) => HttpResponse::InternalServerError()
+            .body("Failed to save extension request into database"),
+    }
+}
+
+#[get("/favourite/save/{id}")]
+async fn save_favourite(
+    id: web::Path<i32>,
+    Auth(user): Auth<HAS_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    let game_id = id.into_inner();
+    let favourite = FavouriteActiveModel {
+        user_id: Set(user.sub),
+        game_id: Set(game_id),
+    };
+
+    match data.db.save_favourite(favourite).await {
+        Ok(_) => HttpResponse::Ok().into(),
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Failed to save favourite into database")
+        }
+    }
+}
+
+#[get("/favourite/delete/{id}")]
+async fn delete_favourite(
+    id: web::Path<i32>,
+    Auth(user): Auth<HAS_TOKEN>,
+    data: Data<AppState>,
+) -> HttpResponse {
+    let game_id = id.into_inner();
+    match data.db.delete_favourite(user.sub, game_id).await {
+        Ok(_) => HttpResponse::Ok().into(),
+        Err(_) => {
+            HttpResponse::InternalServerError().body("Failed to delete favourite from database")
         }
     }
 }
