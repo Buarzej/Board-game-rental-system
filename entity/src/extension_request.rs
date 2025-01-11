@@ -12,7 +12,6 @@ pub struct Model {
     pub id: i32,
     #[sea_orm(unique)]
     pub rental_id: i32,
-    pub request_date: Date,
     pub extension_date: Date,
 }
 
@@ -34,16 +33,4 @@ impl Related<super::rental::Entity> for Entity {
     }
 }
 
-#[async_trait]
-impl ActiveModelBehavior for ActiveModel {
-    async fn before_save<C>(self, _db: &C, _insert: bool) -> Result<Self, DbErr>
-    where
-        C: ConnectionTrait,
-    {
-        if self.request_date.as_ref() > self.extension_date.as_ref() {
-            return Err(DbErr::Custom("request_date cannot be greater than extension_date".into()));
-        }
-
-        Ok(self)
-    }
-}
+impl ActiveModelBehavior for ActiveModel {}

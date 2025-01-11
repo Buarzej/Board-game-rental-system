@@ -8,7 +8,6 @@ pub enum ExtensionRequest {
     Table,
     Id,
     RentalId,
-    RequestDate,
     ExtensionDate,
 }
 
@@ -28,7 +27,6 @@ impl MigrationTrait for Migration {
                     .if_not_exists()
                     .col(pk_auto(ExtensionRequest::Id))
                     .col(integer_uniq(ExtensionRequest::RentalId))
-                    .col(date(ExtensionRequest::RequestDate))
                     .col(date(ExtensionRequest::ExtensionDate))
                     .foreign_key(
                         ForeignKey::create()
