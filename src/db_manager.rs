@@ -186,7 +186,7 @@ impl DatabaseManager {
     }
 
     /// Retrieves all rentals from the database for the given user ID,
-    /// along with the information about associated board games,
+    /// along with the information about associated board games
     /// and whether they are in the user's favourites.
     pub(crate) async fn get_user_rentals(
         &self,
