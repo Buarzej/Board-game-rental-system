@@ -160,6 +160,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(Data::new(state.clone()))
             .service(Files::new("/static", "./static/img"))
+            .service(index_test)
             .service(index_login)
             .service(index_register)
             .service(index_board_game)
@@ -198,6 +199,13 @@ async fn main() -> std::io::Result<()> {
     .bind(("127.0.0.1", 8080))?
     .run()
     .await
+}
+
+// For now, only for testing purposes.
+#[get("/test")]
+async fn index_test(_req: HttpRequest) -> actix_web::Result<NamedFile> {
+    let path: PathBuf = "./static/test.html".parse()?;
+    Ok(NamedFile::open(path)?)
 }
 
 // For now, only for testing purposes.
@@ -259,17 +267,21 @@ async fn register(form: Form<RegisterFormData>, data: Data<AppState>) -> HttpRes
         surname: Set(form.surname.clone()),
         email: Set(form.email.clone()),
         password_hash: Set(password_hash),
-        confirmation_token: Set(Some(uuid)),
+        // TODO: fix emails
+        // confirmation_token: Set(Some(uuid)),
+        confirmation_token: Set(None),
         ..Default::default()
     };
 
     match data.db.insert_user(user).await {
-        Ok(_) => match send_confirmation_email(form.id, form.email.clone(), uuid) {
-            Ok(_) => HttpResponse::Ok().body("User registered"),
-            Err(e) => {
-                HttpResponse::InternalServerError().body(format!("Failed to send email: {}", e))
-            }
-        },
+        // TODO: fix emails
+        // Ok(_) => match send_confirmation_email(form.id, form.email.clone(), uuid) {
+        //     Ok(_) => HttpResponse::Ok().body("User registered"),
+        //     Err(e) => {
+        //         HttpResponse::InternalServerError().body(format!("Failed to send email: {}", e))
+        //     }
+        // },
+        Ok(_) => HttpResponse::Ok().body("User registered"),
         Err(_) => {
             HttpResponse::InternalServerError().body("Failed to save user data into database")
         }
@@ -441,7 +453,8 @@ async fn delete_user(
 async fn save_board_game(
     id: web::Path<i32>,
     MultipartForm(form): MultipartForm<BoardGameFormData>,
-    Auth(_user): Auth<HAS_ADMIN_TOKEN>,
+    // TODO: uncomment this
+    // Auth(_user): Auth<HAS_ADMIN_TOKEN>,
     data: Data<AppState>,
 ) -> HttpResponse {
     let file_name = match form.image.file_name {
@@ -544,6 +557,9 @@ async fn save_rental(
     Auth(user): Auth<HAS_TOKEN>,
     data: Data<AppState>,
 ) -> HttpResponse {
+    
+    // TODO: users can only add or update their own rentals
+    
     let id = id.into_inner();
     let rental_date = match Date::parse_from_str(form.rental_date.as_str(), "%Y-%m-%d") {
         Ok(date) => date,

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Token Redirect</title>
+    <style>
+        pre {
+            background-color: #f4f4f4;
+            border: 1px solid #ddd;
+            padding: 10px;
+            overflow: auto;
+            white-space: pre-wrap; /* Zachowuje formatowanie JSON i łamanie linii */
+            font-family: monospace; /* Stosuje czcionkę monospace do lepszego wyglądu JSON */
+        }
+    </style>
+</head>
+<body>
+<h1>Redirect with Token</h1>
+<form id="redirect-form">
+    <!-- Pole dla wprowadzenia tokena -->
+    <label for="jwt_token">JWT Token:</label>
+    <input type="text" id="jwt_token" placeholder="Enter your JWT token" required><br><br>
+
+    <!-- Pole dla wprowadzenia URL-a -->
+    <label for="redirect_url">Target URL:</label>
+    <input type="text" id="redirect_url" placeholder="Enter target URL" required><br><br>
+
+    <!-- Przycisk wykonujący akcję -->
+    <button type="button" id="redirect-button">Redirect</button>
+</form>
+
+<h2>Response:</h2>
+<!-- Element wyświetlający odpowiedź -->
+<pre id="response">No response yet.</pre>
+
+<script>
+    document.getElementById('redirect-button').addEventListener('click', async function () {
+        const tokenField = document.getElementById('jwt_token');
+        const urlField = document.getElementById('redirect_url');
+        const responseDisplay = document.getElementById('response');
+
+        // Pobierz wartości tokena i URL-a z pól formularza
+        const jwtToken = tokenField.value.trim();
+        const redirectUrl = urlField.value.trim();
+
+        try {
+            // Wykonaj żądanie HEAD lub GET z nagłówkiem Authorization
+            const response = await fetch(redirectUrl, {
+                method: 'GET',
+                headers: {
+                    'authorization': `Bearer ${jwtToken}`
+                }
+            });
+
+            if (response.ok) {
+                const responseBody = await response.json();
+                responseDisplay.textContent = JSON.stringify(responseBody, null, 2);
+            } else {
+                const responseBody = await response.text();
+                alert(`Request failed with status: ${response.status} - ${response.statusText} - ${responseBody}`);
+            }
+        } catch (error) {
+            console.error('Error occurred during the request:', error);
+        }
+    });
+</script>
+</body>
+</html>
