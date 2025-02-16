@@ -344,6 +344,16 @@ impl DatabaseManager {
         RentalHistory::delete_by_id(id).exec(&self.db).await?;
         Ok(())
     }
+    
+    /// Checks if a given game is given user's favourite.
+    pub(crate) async fn is_favourite(&self, user_id: i32, game_id: i32) -> Result<bool, DbErr> {
+        let favourite = Favourite::find()
+            .filter(favourite::Column::UserId.eq(user_id))
+            .filter(favourite::Column::GameId.eq(game_id))
+            .one(&self.db)
+            .await?;
+        Ok(favourite.is_some())
+    }
 
     /// Saves a favourite to the database.
     pub(crate) async fn save_favourite(
@@ -364,6 +374,7 @@ impl DatabaseManager {
 }
 
 #[derive(Debug, Eq, PartialEq, FromQueryResult, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GetBoardGamesQueryResult {
     id: i32,
     title: String,
@@ -377,6 +388,7 @@ pub struct GetBoardGamesQueryResult {
 }
 
 #[derive(Debug, Eq, PartialEq, FromQueryResult, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GetRentalsQueryResult {
     id: i32,
     game_id: i32,
@@ -405,6 +417,7 @@ pub struct GetUserRentalsQueryResult {
 }
 
 #[derive(Debug, Eq, PartialEq, FromQueryResult, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GetUserRentalsAdminQueryResult {
     id: i32,
     game_id: i32,
@@ -417,6 +430,7 @@ pub struct GetUserRentalsAdminQueryResult {
 }
 
 #[derive(Debug, Eq, PartialEq, FromQueryResult, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GetRentalHistoryQueryResult {
     id: i32,
     game_id: i32,
@@ -431,6 +445,7 @@ pub struct GetRentalHistoryQueryResult {
 }
 
 #[derive(Debug, Eq, PartialEq, FromQueryResult, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GetUserRentalHistoryQueryResult {
     id: i32,
     game_id: i32,
@@ -443,6 +458,7 @@ pub struct GetUserRentalHistoryQueryResult {
 }
 
 #[derive(Debug, Eq, PartialEq, FromQueryResult, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GetUserRentalHistoryAdminQueryResult {
     id: i32,
     game_id: i32,

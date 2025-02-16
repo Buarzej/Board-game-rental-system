@@ -5,12 +5,13 @@ use crate::auth::{
     generate_jwt, hash_password, send_confirmation_email, verify_jwt, verify_password, Claims,
 };
 use crate::db_manager::DatabaseManager;
+use actix_cors::Cors;
 use actix_files::{Files, NamedFile};
 use actix_multipart::form::tempfile::TempFile;
 use actix_multipart::form::text::Text;
 use actix_multipart::form::MultipartForm;
 use actix_web::dev::Payload;
-use actix_web::http::header;
+use actix_web::http::{header, StatusCode};
 use actix_web::web::{Data, Form};
 use actix_web::{get, post, web, App, FromRequest, HttpRequest, HttpResponse, HttpServer};
 use chrono::NaiveDate as Date;
@@ -22,10 +23,11 @@ use entity::user::ActiveModel as UserActiveModel;
 use futures::future::{ready, Ready};
 use sea_orm::ActiveValue::Set;
 use sea_orm::NotSet;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+const SELF_REQUEST_USER_ID: i32 = 0;
 const HAS_TOKEN: bool = false;
 const HAS_ADMIN_TOKEN: bool = true;
 const REQUIRED_ENV_VARS: [&str; 7] = [
@@ -79,8 +81,8 @@ impl<const IS_ADMIN: bool> FromRequest for Auth<IS_ADMIN> {
     }
 }
 
-fn is_self_request(user: &Claims, id: i32) -> Result<(), HttpResponse> {
-    if !user.is_admin && user.sub != id {
+fn is_self_request(user: &Claims) -> Result<(), HttpResponse> {
+    if !user.is_admin && user.sub != SELF_REQUEST_USER_ID {
         Err(HttpResponse::Forbidden().body("Insufficient privileges"))
     } else {
         Ok(())
@@ -141,6 +143,24 @@ struct ExtensionRequestFormData {
     extension_date: String,
 }
 
+fn build_error_response(status: StatusCode, error: &str) -> HttpResponse {
+    HttpResponse::build(status).json(ErrorResponse {
+        error: error.to_string(),
+    })
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ErrorResponse {
+    error: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LoginResponse {
+    jwt_token: String,
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Load all the necessary resources.
@@ -157,7 +177,14 @@ async fn main() -> std::io::Result<()> {
     let state = AppState { db };
 
     HttpServer::new(move || {
+        let cors = Cors::default() // TODO: make it more secure
+            .allow_any_origin()
+            .allow_any_method()
+            .allow_any_header()
+            .max_age(3600);
+
         App::new()
+            .wrap(cors)
             .app_data(Data::new(state.clone()))
             .service(Files::new("/static", "./static/img"))
             .service(index_test)
@@ -192,8 +219,7 @@ async fn main() -> std::io::Result<()> {
                     .service(save_extension_request)
                     .service(accept_extension_request)
                     .service(delete_extension_request)
-                    .service(save_favourite)
-                    .service(delete_favourite),
+                    .service(change_favourite),
             )
     })
     .bind(("127.0.0.1", 8080))?
@@ -234,22 +260,26 @@ async fn login(form: Form<LoginFormData>, data: Data<AppState>) -> HttpResponse 
     match data.db.get_user(form.id).await {
         Ok(Some(user)) => {
             if user.confirmation_token.is_some() {
-                HttpResponse::Unauthorized().body("User not confirmed")
+                HttpResponse::Unauthorized().into()
             } else {
                 match verify_password(form.password.clone(), user.password_hash) {
                     Ok(true) => match generate_jwt(user.id, user.is_admin) {
-                        Ok(token) => HttpResponse::Ok().body(token),
-                        Err(_) => {
-                            HttpResponse::InternalServerError().body("Failed to generate JWT")
-                        }
+                        Ok(token) => HttpResponse::Ok().json(LoginResponse { jwt_token: token }),
+                        Err(_) => HttpResponse::InternalServerError().finish(), // Failed to generate JWT token
                     },
-                    Ok(false) => HttpResponse::Unauthorized().body("Invalid password"),
-                    Err(_) => HttpResponse::InternalServerError().body("Failed to verify password"),
+                    Ok(false) => build_error_response(
+                        StatusCode::UNAUTHORIZED,
+                        "Nieprawidłowe dane logowania", // Invalid password
+                    ),
+                    Err(_) => HttpResponse::InternalServerError().finish(), // Failed to verify password
                 }
             }
         }
-        Ok(None) => HttpResponse::Unauthorized().body("User not found"),
-        Err(_) => HttpResponse::InternalServerError().body("Failed to get user data from database"),
+        Ok(None) => build_error_response(
+            StatusCode::UNAUTHORIZED,
+            "Nieprawidłowe dane logowania", // User doesn't exist
+        ),
+        Err(_) => HttpResponse::InternalServerError().finish(), // Failed to get user data from the database
     }
 }
 
@@ -257,7 +287,7 @@ async fn login(form: Form<LoginFormData>, data: Data<AppState>) -> HttpResponse 
 async fn register(form: Form<RegisterFormData>, data: Data<AppState>) -> HttpResponse {
     let password_hash = match hash_password(form.password.clone()) {
         Ok(hash) => hash,
-        Err(_) => return HttpResponse::InternalServerError().body("Failed to hash password"),
+        Err(_) => return HttpResponse::InternalServerError().finish(), // Failed to hash password
     };
 
     let uuid = Uuid::new_v4();
@@ -281,13 +311,13 @@ async fn register(form: Form<RegisterFormData>, data: Data<AppState>) -> HttpRes
         //         HttpResponse::InternalServerError().body(format!("Failed to send email: {}", e))
         //     }
         // },
-        Ok(_) => HttpResponse::Ok().body("User registered"),
-        Err(_) => {
-            HttpResponse::InternalServerError().body("Failed to save user data into database")
-        }
+        Ok(_) => HttpResponse::Ok().finish(),
+        // TODO: Err(_) might mean that user already exists
+        Err(_) => HttpResponse::InternalServerError().finish(), // Failed to save user data into the database
     }
 }
 
+// TODO: change server responses here
 #[get("/user/confirm/{id}/{token}")]
 async fn confirm_user(path: web::Path<(i32, Uuid)>, data: Data<AppState>) -> HttpResponse {
     let (id, token) = path.into_inner();
@@ -318,6 +348,7 @@ async fn confirm_user(path: web::Path<(i32, Uuid)>, data: Data<AppState>) -> Htt
     }
 }
 
+/// id = 0 ==> get info about yourself
 #[get("/user/get/{id}")]
 async fn get_user(
     id: web::Path<i32>,
@@ -326,7 +357,7 @@ async fn get_user(
 ) -> HttpResponse {
     // Non-admin user can only check info about themselves.
     let id = id.into_inner();
-    if let Err(response) = is_self_request(&user, id) {
+    if let Err(response) = is_self_request(&user) {
         return response;
     }
 
@@ -355,7 +386,7 @@ async fn is_penalized(
 ) -> HttpResponse {
     // Non-admin user can only check info about themselves.
     let id = id.into_inner();
-    if let Err(response) = is_self_request(&user, id) {
+    if let Err(response) = is_self_request(&user) {
         return response;
     }
 
@@ -374,7 +405,7 @@ async fn change_password(
 ) -> HttpResponse {
     // Non-admin user can only change their own password.
     let id = id.into_inner();
-    if let Err(response) = is_self_request(&user, id) {
+    if let Err(response) = is_self_request(&user) {
         return response;
     }
 
@@ -442,13 +473,11 @@ async fn delete_user(
     let id = id.into_inner();
     match data.db.delete_user(id).await {
         Ok(_) => HttpResponse::Ok().into(),
-        Err(_) => {
-            HttpResponse::InternalServerError().body("Failed to delete user from database")
-        }
+        Err(_) => HttpResponse::InternalServerError().body("Failed to delete user from database"),
     }
 }
 
-/// id = 0 ==> insert new board game
+/// id = 0 ==> insert a new board game
 #[post("/board_game/save/{id}")]
 async fn save_board_game(
     id: web::Path<i32>,
@@ -516,7 +545,7 @@ async fn get_board_games(Auth(user): Auth<HAS_TOKEN>, data: Data<AppState>) -> H
     match data.db.get_board_games(user.sub).await {
         Ok(board_games) => HttpResponse::Ok().json(board_games),
         Err(_) => {
-            HttpResponse::InternalServerError().body("Failed to get board games data from database")
+            HttpResponse::InternalServerError().finish() // Failed to get board games data from the database
         }
     }
 }
@@ -557,9 +586,8 @@ async fn save_rental(
     Auth(user): Auth<HAS_TOKEN>,
     data: Data<AppState>,
 ) -> HttpResponse {
-    
     // TODO: users can only add or update their own rentals
-    
+
     let id = id.into_inner();
     let rental_date = match Date::parse_from_str(form.rental_date.as_str(), "%Y-%m-%d") {
         Ok(date) => date,
@@ -800,37 +828,35 @@ async fn delete_extension_request(
     }
 }
 
-#[get("/favourite/save/{id}")]
-async fn save_favourite(
+/// Adds or removes a game from the user's favourites.
+#[get("/favourite/{id}")]
+async fn change_favourite(
     id: web::Path<i32>,
     Auth(user): Auth<HAS_TOKEN>,
     data: Data<AppState>,
 ) -> HttpResponse {
     let game_id = id.into_inner();
-    let favourite = FavouriteActiveModel {
-        user_id: Set(user.sub),
-        game_id: Set(game_id),
-    };
-
-    match data.db.save_favourite(favourite).await {
-        Ok(_) => HttpResponse::Ok().into(),
-        Err(_) => {
-            HttpResponse::InternalServerError().body("Failed to save favourite into database")
+    match data.db.is_favourite(user.sub, game_id).await {
+        Ok(true) => {
+            match data.db.delete_favourite(user.sub, game_id).await {
+                Ok(_) => HttpResponse::Ok().finish(),
+                Err(_) => {
+                    HttpResponse::InternalServerError().finish() // Failed to delete favourite from the database
+                }
+            }
         }
-    }
-}
-
-#[get("/favourite/delete/{id}")]
-async fn delete_favourite(
-    id: web::Path<i32>,
-    Auth(user): Auth<HAS_TOKEN>,
-    data: Data<AppState>,
-) -> HttpResponse {
-    let game_id = id.into_inner();
-    match data.db.delete_favourite(user.sub, game_id).await {
-        Ok(_) => HttpResponse::Ok().into(),
-        Err(_) => {
-            HttpResponse::InternalServerError().body("Failed to delete favourite from database")
+        Ok(false) => {
+            let favourite = FavouriteActiveModel {
+                user_id: Set(user.sub),
+                game_id: Set(game_id),
+            };
+            match data.db.save_favourite(favourite).await {
+                Ok(_) => HttpResponse::Ok().finish(),
+                Err(_) => {
+                    HttpResponse::InternalServerError().finish() // Failed to save favourite into the database
+                }
+            }
         }
+        Err(_) => HttpResponse::InternalServerError().finish(), // Failed to check if the game is a favourite
     }
 }
