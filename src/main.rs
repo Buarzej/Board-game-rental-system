@@ -421,7 +421,7 @@ async fn change_password(
     };
 
     match data.db.update_user(user).await {
-        Ok(_) => HttpResponse::Ok().into(),
+        Ok(_) => HttpResponse::Ok().finish(),
         Err(_) => {
             HttpResponse::InternalServerError().body("Failed to save user data into database")
         }
@@ -457,7 +457,7 @@ async fn update_user(
     };
 
     match data.db.update_user(user).await {
-        Ok(_) => HttpResponse::Ok().into(),
+        Ok(_) => HttpResponse::Ok().finish(),
         Err(_) => {
             HttpResponse::InternalServerError().body("Failed to save user data into database")
         }
@@ -472,7 +472,7 @@ async fn delete_user(
 ) -> HttpResponse {
     let id = id.into_inner();
     match data.db.delete_user(id).await {
-        Ok(_) => HttpResponse::Ok().into(),
+        Ok(_) => HttpResponse::Ok().finish(),
         Err(_) => HttpResponse::InternalServerError().body("Failed to delete user from database"),
     }
 }
@@ -517,7 +517,7 @@ async fn save_board_game(
     };
 
     match data.db.save_board_game(board_game).await {
-        Ok(_) => HttpResponse::Ok().into(),
+        Ok(_) => HttpResponse::Ok().finish(),
         Err(_) => {
             HttpResponse::InternalServerError().body("Failed to save board game into database")
         }
@@ -571,7 +571,7 @@ async fn delete_board_game(
 ) -> HttpResponse {
     let id = id.into_inner();
     match data.db.delete_board_game(id).await {
-        Ok(_) => HttpResponse::Ok().into(),
+        Ok(_) => HttpResponse::Ok().finish(),
         Err(_) => {
             HttpResponse::InternalServerError().body("Failed to delete board game from database")
         }
@@ -591,17 +591,17 @@ async fn save_rental(
     let id = id.into_inner();
     let rental_date = match Date::parse_from_str(form.rental_date.as_str(), "%Y-%m-%d") {
         Ok(date) => date,
-        Err(_) => return HttpResponse::BadRequest().body("Invalid date format"),
+        Err(_) => return build_error_response(StatusCode::BAD_REQUEST, "Niepoprawny format daty"),
     };
     let return_date = match Date::parse_from_str(form.return_date.as_str(), "%Y-%m-%d") {
         Ok(date) => date,
-        Err(_) => return HttpResponse::BadRequest().body("Invalid date format"),
+        Err(_) => return build_error_response(StatusCode::BAD_REQUEST, "Niepoprawny format daty"),
     };
 
     let rental = RentalActiveModel {
         id: if id == 0 { NotSet } else { Set(id) },
         game_id: Set(form.game_id),
-        user_id: Set(user.sub),
+        user_id: if id == 0 { NotSet } else { Set(user.sub) },
         rental_date: Set(rental_date),
         return_date: Set(return_date),
         extension_date: Set(None),
@@ -609,8 +609,8 @@ async fn save_rental(
     };
 
     match data.db.save_rental(rental).await {
-        Ok(_) => HttpResponse::Ok().into(),
-        Err(_) => HttpResponse::InternalServerError().body("Failed to save rental into database"),
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(), // Failed to save rental into database
     }
 }
 
@@ -666,7 +666,7 @@ async fn archive_rental(
     }
 
     match data.db.archive_rental(id).await {
-        Ok(_) => HttpResponse::Ok().into(),
+        Ok(_) => HttpResponse::Ok().finish(),
         Err(_) => HttpResponse::InternalServerError().body("Failed to delete rental from database"),
     }
 }
@@ -714,7 +714,7 @@ async fn delete_rental_history(
 ) -> HttpResponse {
     let id = id.into_inner();
     match data.db.delete_rental_history(id).await {
-        Ok(_) => HttpResponse::Ok().into(),
+        Ok(_) => HttpResponse::Ok().finish(),
         Err(_) => HttpResponse::InternalServerError()
             .body("Failed to delete rental history data from database"),
     }
@@ -753,7 +753,7 @@ async fn save_extension_request(
     };
 
     match data.db.save_rental(rental).await {
-        Ok(_) => HttpResponse::Ok().into(),
+        Ok(_) => HttpResponse::Ok().finish(),
         Err(_) => HttpResponse::InternalServerError()
             .body("Failed to save extension request into database"),
     }
@@ -788,7 +788,7 @@ async fn accept_extension_request(
     };
 
     match data.db.save_rental(rental).await {
-        Ok(_) => HttpResponse::Ok().into(),
+        Ok(_) => HttpResponse::Ok().finish(),
         Err(_) => HttpResponse::InternalServerError()
             .body("Failed to save extension request into database"),
     }
@@ -822,7 +822,7 @@ async fn delete_extension_request(
     };
 
     match data.db.save_rental(rental).await {
-        Ok(_) => HttpResponse::Ok().into(),
+        Ok(_) => HttpResponse::Ok().finish(),
         Err(_) => HttpResponse::InternalServerError()
             .body("Failed to save extension request into database"),
     }
