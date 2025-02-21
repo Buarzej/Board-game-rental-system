@@ -589,11 +589,11 @@ async fn save_rental(
     // TODO: users can only add or update their own rentals
 
     let id = id.into_inner();
-    let rental_date = match Date::parse_from_str(form.rental_date.as_str(), "%Y-%m-%d") {
+    let rental_date = match Date::parse_from_str(form.rental_date.as_str(), "%d.%m.%Y") {
         Ok(date) => date,
         Err(_) => return build_error_response(StatusCode::BAD_REQUEST, "Niepoprawny format daty"),
     };
-    let return_date = match Date::parse_from_str(form.return_date.as_str(), "%Y-%m-%d") {
+    let return_date = match Date::parse_from_str(form.return_date.as_str(), "%d.%m.%Y") {
         Ok(date) => date,
         Err(_) => return build_error_response(StatusCode::BAD_REQUEST, "Niepoprawny format daty"),
     };
@@ -601,7 +601,7 @@ async fn save_rental(
     let rental = RentalActiveModel {
         id: if id == 0 { NotSet } else { Set(id) },
         game_id: Set(form.game_id),
-        user_id: if id == 0 { NotSet } else { Set(user.sub) },
+        user_id: Set(user.sub), // TODO: is it okay?
         rental_date: Set(rental_date),
         return_date: Set(return_date),
         extension_date: Set(None),
@@ -610,7 +610,7 @@ async fn save_rental(
 
     match data.db.save_rental(rental).await {
         Ok(_) => HttpResponse::Ok().finish(),
-        Err(_) => HttpResponse::InternalServerError().finish(), // Failed to save rental into database
+        Err(_) => HttpResponse::InternalServerError().finish(), // Failed to save rental into the database
     }
 }
 
@@ -626,7 +626,7 @@ async fn get_rentals(Auth(_user): Auth<HAS_ADMIN_TOKEN>, data: Data<AppState>) -
 async fn get_my_rentals(Auth(user): Auth<HAS_TOKEN>, data: Data<AppState>) -> HttpResponse {
     match data.db.get_user_rentals(user.sub).await {
         Ok(rentals) => HttpResponse::Ok().json(rentals),
-        Err(_) => HttpResponse::InternalServerError().body("Failed to get rentals from database"),
+        Err(_) => HttpResponse::InternalServerError().finish(), // Failed to get rentals from the database
     }
 }
 
@@ -687,8 +687,7 @@ async fn get_rental_history(
 async fn get_my_rental_history(Auth(user): Auth<HAS_TOKEN>, data: Data<AppState>) -> HttpResponse {
     match data.db.get_user_rental_history(user.sub).await {
         Ok(rental_history) => HttpResponse::Ok().json(rental_history),
-        Err(_) => HttpResponse::InternalServerError()
-            .body("Failed to get rental history data from database"),
+        Err(_) => HttpResponse::InternalServerError().finish(), // Failed to get rental history data from the database
     }
 }
 

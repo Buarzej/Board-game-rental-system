@@ -282,7 +282,7 @@ impl DatabaseManager {
         &self,
         user_id: i32,
     ) -> Result<Vec<GetUserRentalHistoryQueryResult>, DbErr> {
-        let user_rental_history = Rental::find()
+        let user_rental_history = RentalHistory::find()
             .select_only()
             .columns(
                 rental_history::Column::iter()
@@ -404,6 +404,7 @@ pub struct GetRentalsQueryResult {
 }
 
 #[derive(Debug, Eq, PartialEq, FromQueryResult, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GetUserRentalsQueryResult {
     id: i32,
     game_id: i32,
