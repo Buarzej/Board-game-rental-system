@@ -81,8 +81,8 @@ impl<const IS_ADMIN: bool> FromRequest for Auth<IS_ADMIN> {
     }
 }
 
-fn is_self_request(user: &Claims) -> Result<(), HttpResponse> {
-    if !user.is_admin && user.sub != SELF_REQUEST_USER_ID {
+fn is_self_request(user: &Claims, id: i32) -> Result<(), HttpResponse> {
+    if !user.is_admin && user.sub != id {
         Err(HttpResponse::Forbidden().body("Insufficient privileges"))
     } else {
         Ok(())
@@ -260,7 +260,10 @@ async fn login(form: Form<LoginFormData>, data: Data<AppState>) -> HttpResponse 
     match data.db.get_user(form.id).await {
         Ok(Some(user)) => {
             if user.confirmation_token.is_some() {
-                HttpResponse::Unauthorized().into()
+                build_error_response(
+                    StatusCode::UNAUTHORIZED,
+                    "Konto nie zostało jeszcze aktywowane",
+                )
             } else {
                 match verify_password(form.password.clone(), user.password_hash) {
                     Ok(true) => match generate_jwt(user.id, user.is_admin) {
@@ -348,7 +351,6 @@ async fn confirm_user(path: web::Path<(i32, Uuid)>, data: Data<AppState>) -> Htt
     }
 }
 
-/// id = 0 ==> get info about yourself
 #[get("/user/get/{id}")]
 async fn get_user(
     id: web::Path<i32>,
@@ -357,7 +359,7 @@ async fn get_user(
 ) -> HttpResponse {
     // Non-admin user can only check info about themselves.
     let id = id.into_inner();
-    if let Err(response) = is_self_request(&user) {
+    if let Err(response) = is_self_request(&user, id) {
         return response;
     }
 
@@ -386,7 +388,7 @@ async fn is_penalized(
 ) -> HttpResponse {
     // Non-admin user can only check info about themselves.
     let id = id.into_inner();
-    if let Err(response) = is_self_request(&user) {
+    if let Err(response) = is_self_request(&user, id) {
         return response;
     }
 
@@ -405,7 +407,7 @@ async fn change_password(
 ) -> HttpResponse {
     // Non-admin user can only change their own password.
     let id = id.into_inner();
-    if let Err(response) = is_self_request(&user) {
+    if let Err(response) = is_self_request(&user, id) {
         return response;
     }
 
