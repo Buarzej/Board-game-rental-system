@@ -12,6 +12,7 @@ use lettre::message::Mailbox;
 use uuid::Uuid;
 
 const CONFIRMATION_EMAIL_SUBJECT: &str = "Potwierdź swój email";
+const JWT_EXPIRY_TIME: i64 = 30;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Claims {
@@ -30,7 +31,7 @@ pub(crate) fn generate_jwt(
         sub: user_id,
         is_admin,
         iat: Utc::now().timestamp() as usize,
-        exp: (Utc::now() + Duration::minutes(30)).timestamp() as usize,
+        exp: (Utc::now() + Duration::minutes(JWT_EXPIRY_TIME)).timestamp() as usize,
     };
     let key = env::var("JWT_SECRET").unwrap();
 

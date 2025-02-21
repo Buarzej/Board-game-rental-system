@@ -654,20 +654,22 @@ async fn archive_rental(
     if !user.is_admin {
         let rental = match data.db.get_rental(id).await {
             Ok(Some(rental)) => rental,
-            Ok(None) => return HttpResponse::NotFound().body("Rental not found"),
-            Err(_) => {
-                return HttpResponse::InternalServerError()
-                    .body("Failed to get rental data from database")
+            Ok(None) => {
+                return build_error_response(
+                    StatusCode::NOT_FOUND,
+                    "Nie znaleziono wypożyczenia w bazie danych",
+                )
             }
+            Err(_) => return HttpResponse::InternalServerError().finish(), // Failed to get rental data from the database
         };
         if rental.user_id != user.sub || rental.picked_up {
-            return HttpResponse::Forbidden().body("Insufficient privileges");
+            return HttpResponse::Forbidden().finish();
         }
     }
 
     match data.db.archive_rental(id).await {
         Ok(_) => HttpResponse::Ok().finish(),
-        Err(_) => HttpResponse::InternalServerError().body("Failed to delete rental from database"),
+        Err(_) => HttpResponse::InternalServerError().finish(), // Failed to delete rental from the database
     }
 }
 
